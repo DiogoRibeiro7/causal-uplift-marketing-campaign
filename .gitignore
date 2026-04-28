@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+
+# Environments
+.venv/
+.env
+
+# Data artifacts
+data/raw/*
+data/interim/*
+data/processed/*
+!data/raw/.gitkeep
+!data/interim/.gitkeep
+!data/processed/.gitkeep
+
+# Reports generated locally
+reports/figures/*
+reports/*.csv
+reports/*.json
+reports/*.joblib
+!reports/figures/.gitkeep
+!reports/campaign_policy_report.md
+
+# OS/editor
+.DS_Store
+.vscode/
+.idea/
