@@ -67,3 +67,90 @@ def uplift_by_group(
             }
         )
     return pd.DataFrame(rows).sort_values(group_col)
+
+
+def subgroup_uplift_with_ci(
+    data: pd.DataFrame,
+    *,
+    group_col: str,
+    treatment_col: str = "treatment",
+    outcome_col: str = "conversion",
+    confidence: float = 0.95,
+    min_arm_size: int = 30,
+) -> pd.DataFrame:
+    """Subgroup-level observed uplift with a normal-approximation CI.
+
+    For each unique value of ``group_col``, returns the within-subgroup
+    treated-control conversion-rate difference and a confidence interval
+    based on the standard error
+
+    .. math::
+        \\text{SE} = \\sqrt{p_t(1 - p_t) / n_t + p_c(1 - p_c) / n_c}.
+
+    The CI is set to ``NaN`` for subgroups whose treated or control arm has
+    fewer than ``min_arm_size`` rows, since the normal approximation is
+    unreliable there.
+
+    This is the per-segment counterpart to the marginal CIs in
+    :func:`uplift_marketing.evaluation.bootstrap_policy_value`. It is the
+    natural lens for fairness checks and business-segment review: where is
+    the campaign actually moving customers, and where is the signal too thin
+    to act on?
+    """
+
+    if not 0 < confidence < 1:
+        raise ValueError("confidence must be in (0, 1)")
+    missing = [c for c in (group_col, treatment_col, outcome_col) if c not in data]
+    if missing:
+        raise ValueError(f"Missing columns: {missing}")
+
+    from math import sqrt
+    from scipy.stats import norm
+
+    z = float(norm.ppf(1.0 - (1.0 - confidence) / 2.0))
+    rows: list[dict[str, float | int | str]] = []
+    for group_value, group_data in data.groupby(group_col, observed=True):
+        treated = group_data[group_data[treatment_col] == 1]
+        control = group_data[group_data[treatment_col] == 0]
+        n_t = len(treated)
+        n_c = len(control)
+        if n_t == 0 or n_c == 0:
+            rows.append(
+                {
+                    group_col: group_value,
+                    "n": len(group_data),
+                    "treated_n": n_t,
+                    "control_n": n_c,
+                    "observed_uplift": float("nan"),
+                    "ci_low": float("nan"),
+                    "ci_high": float("nan"),
+                }
+            )
+            continue
+        p_t = float(treated[outcome_col].mean())
+        p_c = float(control[outcome_col].mean())
+        diff = p_t - p_c
+        if n_t < min_arm_size or n_c < min_arm_size:
+            ci_low = ci_high = float("nan")
+        else:
+            se = sqrt(p_t * (1 - p_t) / n_t + p_c * (1 - p_c) / n_c)
+            ci_low = diff - z * se
+            ci_high = diff + z * se
+        rows.append(
+            {
+                group_col: group_value,
+                "n": len(group_data),
+                "treated_n": n_t,
+                "control_n": n_c,
+                "treated_rate": p_t,
+                "control_rate": p_c,
+                "observed_uplift": diff,
+                "ci_low": ci_low,
+                "ci_high": ci_high,
+            }
+        )
+    return (
+        pd.DataFrame(rows)
+        .sort_values("observed_uplift", ascending=False)
+        .reset_index(drop=True)
+    )

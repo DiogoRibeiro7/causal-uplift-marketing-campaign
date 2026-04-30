@@ -25,10 +25,10 @@
 
 ## v0.4 — Evaluation maturity
 
-- [ ] Add AUUC and normalized Qini metrics.
-- [ ] Add bootstrap confidence intervals for policy value.
-- [ ] Add decile-level uplift stability analysis.
-- [ ] Add subgroup-level uplift analysis.
+- [x] Add AUUC and normalized Qini metrics (`uplift_curve`, `area_under_uplift`, `normalized_qini`; reported in NB05 alongside raw AUQ).
+- [x] Add bootstrap confidence intervals for policy value (`bootstrap_policy_value`; NB05 top-k chart now carries CIs).
+- [x] Add decile-level uplift stability analysis (`bootstrap_decile_uplift`; NB05 decile chart now carries error bars).
+- [x] Add subgroup-level uplift analysis (`subgroup_uplift_with_ci`; NB07 has a fairness/segmentation panel).
 
 ## v0.5 — Campaign simulation
 
