@@ -2,14 +2,34 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Literal
 
 import numpy as np
 import pandas as pd
 
 
 REQUIRED_COLUMNS = {"treatment", "conversion"}
+
+HILLSTROM_FILENAME = (
+    "Kevin_Hillstrom_MineThatData_E-MailAnalytics_DataMiningChallenge_2008.03.20.csv"
+)
+HILLSTROM_FEATURE_COLUMNS = [
+    "recency",
+    "history_segment",
+    "history",
+    "mens",
+    "womens",
+    "zip_code",
+    "newbie",
+    "channel",
+]
+HILLSTROM_TREATMENT_LABELS = {
+    "any": ("Mens E-Mail", "Womens E-Mail"),
+    "mens": ("Mens E-Mail",),
+    "womens": ("Womens E-Mail",),
+}
 
 
 def load_csv(path: str | Path) -> pd.DataFrame:
@@ -134,6 +154,180 @@ def prepare_uplift_frame(
     prepared[treatment_col] = normalize_binary_column(prepared, treatment_col)
     prepared[outcome_col] = normalize_binary_column(prepared, outcome_col)
     return prepared
+
+
+def load_hillstrom(
+    path: str | Path,
+    *,
+    treated_arm: Literal["any", "mens", "womens"] = "any",
+    outcome: Literal["conversion", "visit"] = "conversion",
+) -> pd.DataFrame:
+    """Load and adapt the Hillstrom MineThatData email uplift dataset.
+
+    The raw CSV contains a three-arm `segment` column (`Mens E-Mail`,
+    `Womens E-Mail`, `No E-Mail`) and three outcome columns (`visit`,
+    `conversion`, `spend`). This adapter binarises treatment and selects a
+    single binary outcome so the rest of the pipeline can consume the data
+    using the project's standard `treatment` / `conversion` schema.
+
+    Parameters
+    ----------
+    path:
+        Path to the Hillstrom CSV (the canonical filename is exposed as
+        :data:`HILLSTROM_FILENAME`).
+    treated_arm:
+        How to binarise the treatment column.
+
+        - ``"any"`` (default) — treats both Mens and Womens email arms as a
+          single treatment, against the No E-Mail control. Uses all 64,000
+          rows but mixes two creatives, which slightly weakens the treatment
+          consistency assumption.
+        - ``"mens"`` / ``"womens"`` — keep only the chosen arm and the
+          No E-Mail control, dropping the third arm entirely. Cleaner
+          experimental contrast at the cost of fewer rows.
+    outcome:
+        Which binary outcome to use as the project's `conversion` column.
+        Defaults to the campaign-relevant `conversion` event; the dataset
+        also exposes `visit`, an upstream-funnel outcome.
+
+    Returns
+    -------
+    pandas.DataFrame
+        A frame with `customer_id`, the eight Hillstrom features, a binary
+        `treatment` column, and a binary `conversion` column. Other outcomes
+        are dropped to keep feature inference clean.
+    """
+
+    if treated_arm not in HILLSTROM_TREATMENT_LABELS:
+        raise ValueError(
+            f"treated_arm must be one of {sorted(HILLSTROM_TREATMENT_LABELS)}; "
+            f"got {treated_arm!r}"
+        )
+    if outcome not in {"conversion", "visit"}:
+        raise ValueError(f"outcome must be 'conversion' or 'visit'; got {outcome!r}")
+
+    raw = load_csv(path)
+    expected = {
+        "segment",
+        "visit",
+        "conversion",
+        "spend",
+        *HILLSTROM_FEATURE_COLUMNS,
+    }
+    missing = sorted(expected - set(raw.columns))
+    if missing:
+        raise ValueError(
+            f"Hillstrom CSV is missing expected columns: {missing}. "
+            f"Found columns: {list(raw.columns)}"
+        )
+
+    treated_labels = HILLSTROM_TREATMENT_LABELS[treated_arm]
+    if treated_arm == "any":
+        kept = raw
+    else:
+        kept = raw[raw["segment"].isin([*treated_labels, "No E-Mail"])].copy()
+
+    kept = kept.reset_index(drop=True)
+    treatment = kept["segment"].isin(treated_labels).astype(int)
+
+    adapted = pd.DataFrame(
+        {
+            "customer_id": np.arange(1, len(kept) + 1, dtype=int),
+            **{column: kept[column] for column in HILLSTROM_FEATURE_COLUMNS},
+            "treatment": treatment,
+            "conversion": kept[outcome].astype(int),
+        }
+    )
+    return adapted
+
+
+def find_hillstrom_csv(raw_dir: str | Path) -> Path | None:
+    """Return the Hillstrom CSV path under `raw_dir` if present, else None."""
+
+    candidate = Path(raw_dir) / HILLSTROM_FILENAME
+    if candidate.exists():
+        return candidate
+    return None
+
+
+@dataclass(frozen=True)
+class UpliftDataset:
+    """Container returned by :func:`load_default_uplift_data`.
+
+    Bundles the loaded frame with the per-source metadata that downstream
+    notebooks need to remain agnostic to whether they are running on the
+    real dataset or the synthetic fallback.
+    """
+
+    data: pd.DataFrame
+    source: str
+    expected_treated_share: float
+    extra_excluded: list[str]
+    primary_segment_column: str
+    cost_per_contact: float
+    value_per_conversion: float
+
+    @property
+    def break_even_uplift(self) -> float:
+        """Per-customer uplift threshold at which a contact pays for itself."""
+
+        if self.value_per_conversion <= 0:
+            raise ValueError("value_per_conversion must be positive")
+        return self.cost_per_contact / self.value_per_conversion
+
+
+def load_default_uplift_data(
+    raw_dir: str | Path,
+    *,
+    n_synthetic_rows: int = 10_000,
+    random_state: int = 42,
+    treated_arm: Literal["any", "mens", "womens"] = "any",
+    outcome: Literal["conversion", "visit"] = "conversion",
+) -> UpliftDataset:
+    """Load the Hillstrom dataset if its CSV is present, else synthetic data.
+
+    Returns a :class:`UpliftDataset` that bundles the frame with per-source
+    metadata (expected treated share, columns to exclude from feature
+    inference, a readable categorical for by-segment plots, and placeholder
+    economics calibrated so each source's break-even uplift sits between its
+    average and top-decile uplift).
+    """
+
+    hillstrom_path = find_hillstrom_csv(raw_dir)
+    if hillstrom_path is not None:
+        frame = load_hillstrom(
+            hillstrom_path,
+            treated_arm=treated_arm,
+            outcome=outcome,
+        )
+        share = 2.0 / 3.0 if treated_arm == "any" else 0.5
+        return UpliftDataset(
+            data=frame,
+            source="hillstrom",
+            expected_treated_share=share,
+            extra_excluded=["customer_id"],
+            primary_segment_column="zip_code",
+            # Hillstrom conversion is rare (~1 percent). Placeholders give a
+            # break-even uplift of 0.01, between the dataset's ATE (~0.005)
+            # and its top-decile uplift, so targeting matters.
+            cost_per_contact=0.20,
+            value_per_conversion=20.00,
+        )
+
+    frame = generate_synthetic_uplift_data(
+        n_rows=n_synthetic_rows,
+        random_state=random_state,
+    )
+    return UpliftDataset(
+        data=frame,
+        source="synthetic",
+        expected_treated_share=0.5,
+        extra_excluded=["customer_id", "visit"],
+        primary_segment_column="device",
+        # Synthetic ATE ~0.046, top-decile ~0.10. Break-even 0.067.
+        cost_per_contact=1.00,
+        value_per_conversion=15.00,
+    )
 
 
 def generate_synthetic_uplift_data(

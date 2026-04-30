@@ -11,10 +11,10 @@
 
 ## v0.2 — Real data integration
 
-- [ ] Validate the downloader against the selected real dataset.
-- [ ] Add a robust data schema adapter for Criteo-like uplift data.
-- [ ] Add feature metadata and column documentation.
-- [ ] Add data checks for treatment/control randomization assumptions.
+- [x] Validate the downloader against the selected real dataset (Hillstrom MineThatData via Kaggle, plus `.env` loading for credentials).
+- [x] Add a robust data schema adapter for Criteo-like uplift data (`load_hillstrom`, `load_default_uplift_data`, `UpliftDataset`).
+- [x] Add feature metadata and column documentation (see [`docs/DATA_SOURCE.md`](docs/DATA_SOURCE.md)).
+- [x] Add data checks for treatment/control randomization assumptions (`validate_randomization` with chi-square SRM, SMD per feature, null share).
 
 ## v0.3 — Uplift modelling depth
 
