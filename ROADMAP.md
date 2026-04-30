@@ -18,10 +18,10 @@
 
 ## v0.3 — Uplift modelling depth
 
-- [ ] Add cross-fitting for treatment-effect estimation.
-- [ ] Add calibrated probability models.
-- [ ] Add doubly robust uplift estimation.
-- [ ] Add honest validation splits by treatment arm.
+- [x] Add cross-fitting for treatment-effect estimation (`cross_fit_uplift_oof`, plus K-fold cross-fitting baked into `DRLearner`).
+- [x] Add calibrated probability models (`make_calibrated_classifier`, with a NB06 panel showing the predicted-vs-realised gap shrinks ~50× under isotonic calibration on Hillstrom).
+- [x] Add doubly robust uplift estimation (`DRLearner` — AIPW pseudo-outcomes via cross-fitting, second-stage Ridge regressor).
+- [x] Add honest validation splits by treatment arm (`honest_train_test_split`, stratified on treatment × outcome).
 
 ## v0.4 — Evaluation maturity
 
