@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Literal
+from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 import pandas as pd
+
+if TYPE_CHECKING:
+    from uplift_marketing.economics import CampaignEconomics
 
 
 REQUIRED_COLUMNS = {"treatment", "conversion"}
@@ -74,7 +78,9 @@ def save_csv(data: pd.DataFrame, path: str | Path) -> None:
     data.to_csv(output_path, index=False)
 
 
-def validate_required_columns(data: pd.DataFrame, required: Iterable[str] = REQUIRED_COLUMNS) -> None:
+def validate_required_columns(
+    data: pd.DataFrame, required: Iterable[str] = REQUIRED_COLUMNS
+) -> None:
     """Validate that a DataFrame contains required columns.
 
     Parameters
@@ -275,6 +281,17 @@ class UpliftDataset:
             raise ValueError("value_per_conversion must be positive")
         return self.cost_per_contact / self.value_per_conversion
 
+    @property
+    def economics(self) -> CampaignEconomics:
+        """Return the dataset's placeholder cost / value as a value object."""
+
+        from uplift_marketing.economics import CampaignEconomics
+
+        return CampaignEconomics(
+            cost_per_contact=self.cost_per_contact,
+            value_per_conversion=self.value_per_conversion,
+        )
+
 
 def load_default_uplift_data(
     raw_dir: str | Path,
@@ -383,7 +400,8 @@ def generate_synthetic_uplift_data(
         - 0.25 * (device == "tablet")
     )
 
-    conversion_probability = 1.0 / (1.0 + np.exp(-(baseline_logit + treatment * treatment_effect_logit)))
+    conversion_logit = baseline_logit + treatment * treatment_effect_logit
+    conversion_probability = 1.0 / (1.0 + np.exp(-conversion_logit))
     conversion = rng.binomial(1, conversion_probability)
 
     # A secondary outcome often present in uplift data.

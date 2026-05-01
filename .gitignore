@@ -23,6 +23,7 @@ reports/figures/*
 reports/*.csv
 reports/*.json
 reports/*.joblib
+reports/dashboard/
 !reports/figures/.gitkeep
 !reports/campaign_policy_report.md
 

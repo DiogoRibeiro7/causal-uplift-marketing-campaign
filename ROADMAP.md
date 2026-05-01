@@ -32,14 +32,14 @@
 
 ## v0.5 — Campaign simulation
 
-- [ ] Add campaign budget optimizer.
-- [ ] Add cost-per-contact and conversion-value assumptions.
-- [ ] Add scenario analysis for contact budgets.
-- [ ] Add dashboard-ready output tables.
+- [x] Add campaign budget optimizer (`optimize_budget` in `uplift_marketing.economics`; sweeps the predicted-profit curve and returns a `BudgetRecommendation` with the optimal fraction, cut-off score, and selected customer list).
+- [x] Add cost-per-contact and conversion-value assumptions (`CampaignEconomics` value object with `break_even_uplift` and `net_profit`; surfaced through `UpliftDataset.economics`).
+- [x] Add scenario analysis for contact budgets (`scenario_table` sweeps policy × economics combinations; NB06 §9 plots sensitivity to halved value / doubled contact cost).
+- [x] Add dashboard-ready output tables (`export_dashboard` writes `recommended_targets.csv`, `profit_curve.csv`, `budget_scenarios.csv`, `model_summary.json` under `reports/dashboard/`; wired into `run_pipeline` and NB06 §10).
 
 ## v0.6 — Reporting
 
-- [ ] Generate a campaign policy report automatically.
-- [ ] Export plots to `reports/figures`.
-- [ ] Add a model card focused on causal assumptions and misuse risks.
-- [ ] Add an executive summary notebook.
+- [x] Generate a campaign policy report automatically (`uplift_marketing.policy_report.build_policy_report` / `write_policy_report`; produces a stakeholder-facing markdown report tying executive summary, performance metrics, profit-optimal recommendation, scenario sensitivity, and embedded figures into one document. Links to the model card for due diligence. `export_dashboard` writes `reports/dashboard/policy_report.md` automatically).
+- [x] Export plots to `reports/figures` (`uplift_marketing.plots` module: `fig_qini_curve`, `fig_profit_curve`, `fig_uplift_by_decile`, `fig_uplift_curve`, `fig_scenarios`; `export_campaign_figures` wraps the canonical set. `export_dashboard` writes the PNGs under `reports/dashboard/figures/` automatically).
+- [x] Add a model card focused on causal assumptions and misuse risks (`uplift_marketing.model_card.build_model_card` / `write_model_card`; renders structured markdown covering randomization diagnostics, SUTVA / consistency / positivity, performance metrics with reading guidance, and named misuse risks. `export_dashboard` writes `reports/dashboard/model_card.md` automatically; NB06 §11 demonstrates the workflow).
+- [x] Add an executive summary notebook ([NB09](notebooks/09_executive_summary.ipynb): 2-minute read with the question, what we did, headline result, sensitivity, what we cannot say, and pointers to the deeper notebooks. Reads from `reports/dashboard/` so it stays in sync with the latest pipeline run).
