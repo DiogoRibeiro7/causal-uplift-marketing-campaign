@@ -14,7 +14,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 import matplotlib as mpl
 import matplotlib.pyplot as plt
@@ -64,7 +64,7 @@ def _styled() -> Iterator[None]:
 
     # The Matplotlib stub enumerates literal rcParams keys, while this
     # reusable style is kept as a runtime-validated dictionary.
-    with mpl.rc_context(_PLOT_STYLE):  # type: ignore[arg-type]
+    with mpl.rc_context(cast(Any, _PLOT_STYLE)):
         yield
 
 

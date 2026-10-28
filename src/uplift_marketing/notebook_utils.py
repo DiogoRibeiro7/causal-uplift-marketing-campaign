@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from typing import Any, cast
 
 import matplotlib as mpl
 from matplotlib.figure import Figure
@@ -63,7 +64,7 @@ def setup_notebook(config: ProjectConfig = DEFAULT_CONFIG) -> ProjectConfig:
 
     # Matplotlib's typed rcParams key literals cannot describe a dynamic
     # dictionary, but Matplotlib validates the keys and values at runtime.
-    mpl.rcParams.update(PLOT_STYLE)  # type: ignore[arg-type]
+    mpl.rcParams.update(cast(Any, PLOT_STYLE))
     return config
 
 
