@@ -46,6 +46,9 @@ def test_fig_qini_curve_renders() -> None:
     ax = fig.axes[0]
     # The curve should have at least the model + random baseline.
     assert len(ax.lines) >= 2
+    for line in ax.lines[:2]:
+        assert line.get_xdata()[0] == 0.0
+        assert line.get_ydata()[0] == 0.0
     plt.close(fig)
 
 
@@ -74,6 +77,8 @@ def test_fig_uplift_by_decile_returns_figure() -> None:
 def test_fig_uplift_curve_returns_figure() -> None:
     fig = fig_uplift_curve(_scored_fixture())
     assert isinstance(fig, plt.Figure)
+    assert fig.axes[0].lines[0].get_xdata()[0] == 0.0
+    assert fig.axes[0].lines[0].get_ydata()[0] == 0.0
     plt.close(fig)
 
 
