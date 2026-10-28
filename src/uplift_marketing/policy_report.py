@@ -197,19 +197,33 @@ def _executive_summary(report: PolicyReport) -> list[str]:
         if not np.isnan(report.normalized_qini_score)
         else "n/a"
     )
+    if rec.n_selected == 0:
+        policy_summary = (
+            "The profit-optimal policy is to **contact no customers** "
+            "under the supplied economics "
+            f"({economics.currency} {economics.cost_per_contact:.4f}/contact, "
+            f"{economics.currency} {economics.value_per_conversion:.2f}/conversion). "
+            "Every evaluated contact policy has non-positive predicted "
+            "net profit, so the recommended policy predicts zero "
+            "incremental conversions and zero net profit."
+        )
+    else:
+        policy_summary = (
+            f"Targeting the **top {rec.fraction:.2%}** of customers by predicted "
+            f"uplift ({rec.n_selected:,} customers, cut-off score "
+            f"`{rec.threshold_score:+.4f}`) is the profit-optimal contact policy "
+            f"under the supplied economics ({economics.currency} "
+            f"{economics.cost_per_contact:.4f}/contact, {economics.currency} "
+            f"{economics.value_per_conversion:.2f}/conversion). At this cut-off "
+            f"the model predicts **{economics.currency} "
+            f"{rec.predicted_net_profit:,.2f}** of incremental net profit "
+            f"({rec.predicted_incremental_conversions:.1f} incremental "
+            f"conversions)."
+        )
     return [
         "## Executive summary",
         "",
-        f"Targeting the **top {rec.fraction:.2%}** of customers by predicted "
-        f"uplift ({rec.n_selected:,} customers, cut-off score "
-        f"`{rec.threshold_score:+.4f}`) is the profit-optimal contact policy "
-        f"under the supplied economics ({economics.currency} "
-        f"{economics.cost_per_contact:.4f}/contact, {economics.currency} "
-        f"{economics.value_per_conversion:.2f}/conversion). At this cut-off "
-        f"the model predicts **{economics.currency} "
-        f"{rec.predicted_net_profit:,.2f}** of incremental net profit "
-        f"({rec.predicted_incremental_conversions:.1f} incremental "
-        f"conversions).",
+        policy_summary,
         "",
         f"The model's normalized Qini score is **{norm_str}** on this "
         "evaluation split (see *Performance* below for the reading guide). "
@@ -272,6 +286,7 @@ def _performance_section(report: PolicyReport, base_dir: Path | None) -> list[st
 def _recommendation_section(report: PolicyReport, base_dir: Path | None) -> list[str]:
     rec = report.recommendation
     economics = report.economics
+    cutoff = f"`{rec.threshold_score:+.4f}`" if rec.threshold_score is not None else "n/a"
     out = [
         "## Profit-optimal recommendation",
         "",
@@ -281,7 +296,7 @@ def _recommendation_section(report: PolicyReport, base_dir: Path | None) -> list
         "",
         f"- Recommended top fraction: **{rec.fraction:.4f}**",
         f"- Customers to contact: **{rec.n_selected:,}**",
-        f"- Cut-off uplift score: `{rec.threshold_score:+.4f}`",
+        f"- Cut-off uplift score: {cutoff}",
         f"- Predicted incremental conversions: **{rec.predicted_incremental_conversions:.2f}**",
         f"- Predicted net profit: **{economics.currency} {rec.predicted_net_profit:,.2f}**",
         "",

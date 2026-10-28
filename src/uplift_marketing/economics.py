@@ -72,8 +72,8 @@ class BudgetRecommendation:
     n_selected:
         Number of customers in the recommended selection.
     threshold_score:
-        The score value at the cut-off — every customer above this score is
-        in the recommendation, every customer below it is excluded.
+        The score value at the cut-off, or ``None`` when no customers should
+        be contacted. At ties, ``targets`` gives the exact selection.
     predicted_incremental_conversions:
         Sum of the uplift score over the selected customers (the model's
         belief about the campaign's lift). Use the calibration discussion
@@ -91,7 +91,7 @@ class BudgetRecommendation:
 
     fraction: float
     n_selected: int
-    threshold_score: float
+    threshold_score: float | None
     predicted_incremental_conversions: float
     predicted_revenue: float
     predicted_cost: float
@@ -107,10 +107,10 @@ def _expected_profit_at_fraction(
     fraction: float,
     economics: CampaignEconomics,
 ) -> dict[str, float]:
-    """Inner helper: predicted profit for the top-`fraction` selection."""
+    """Inner helper: predicted profit for the top-``fraction`` selection."""
 
     n_total = len(scored)
-    n_sel = max(1, int(np.ceil(n_total * fraction)))
+    n_sel = min(n_total, max(1, int(np.ceil(n_total * fraction)))) if fraction > 0 else 0
     selected = scored.sort_values(score_col, ascending=False).head(n_sel)
     predicted_inc = float(selected[uplift_col].sum())
     revenue = predicted_inc * economics.value_per_conversion
@@ -122,7 +122,7 @@ def _expected_profit_at_fraction(
         "revenue": revenue,
         "cost": cost,
         "net_profit": revenue - cost,
-        "threshold_score": float(selected[score_col].iloc[-1]),
+        "threshold_score": float(selected[score_col].iloc[-1]) if n_sel else float("nan"),
     }
 
 
@@ -136,9 +136,10 @@ def optimize_budget(
 ) -> BudgetRecommendation:
     """Pick the top-fraction that maximises predicted net profit.
 
-    Sweeps the requested grid of contact fractions, picks the one with the
-    highest predicted profit, and returns the recommended customer list and
-    cut-off score along with the full sweep table for plotting.
+    Sweeps the requested grid of contact fractions plus the no-contact
+    baseline (zero profit), then returns the highest-profit policy and its
+    customer list. A no-contact recommendation has an empty ``targets``
+    DataFrame and ``threshold_score=None``.
 
     Parameters
     ----------
@@ -157,8 +158,9 @@ def optimize_budget(
         Column whose sum over the selected rows is taken as the predicted
         incremental conversions. Defaults to ``uplift_score``.
     fractions:
-        Optional grid of fractions in $(0, 1]$ to sweep. Defaults to
-        ``np.linspace(0.02, 1.0, 50)``.
+        Optional non-empty grid of contact fractions in ``(0, 1]``.
+        Defaults to ``np.linspace(0.02, 1.0, 50)``. The zero-contact
+        baseline is always included automatically.
     """
 
     missing = [c for c in (score_col, uplift_col) if c not in scored.columns]
@@ -168,23 +170,27 @@ def optimize_budget(
     if fractions is None:
         fractions = np.round(np.linspace(0.02, 1.0, 50), 4)
     fractions = np.asarray(fractions, dtype=float)
-    if np.any((fractions <= 0) | (fractions > 1)):
-        raise ValueError("fractions must lie in (0, 1]")
+    if (
+        fractions.ndim != 1
+        or fractions.size == 0
+        or not np.all(np.isfinite(fractions))
+        or np.any((fractions <= 0) | (fractions > 1))
+    ):
+        raise ValueError("fractions must be a non-empty 1D grid in (0, 1]")
 
-    rows = [
+    rows = [_expected_profit_at_fraction(scored, score_col, uplift_col, 0.0, economics)]
+    rows += [
         _expected_profit_at_fraction(scored, score_col, uplift_col, float(f), economics)
         for f in fractions
     ]
     profit_curve = pd.DataFrame(rows)
     best = profit_curve.loc[profit_curve["net_profit"].idxmax()]
     n_selected = int(best["n_selected"])
-    targets = (
-        scored.sort_values(score_col, ascending=False).head(n_selected).copy()
-    )
+    targets = scored.sort_values(score_col, ascending=False).head(n_selected).copy()
     return BudgetRecommendation(
         fraction=float(best["fraction"]),
         n_selected=n_selected,
-        threshold_score=float(best["threshold_score"]),
+        threshold_score=float(best["threshold_score"]) if n_selected else None,
         predicted_incremental_conversions=float(best["predicted_incremental_conversions"]),
         predicted_revenue=float(best["revenue"]),
         predicted_cost=float(best["cost"]),
@@ -217,7 +223,7 @@ def scenario_table(
     uplift_col:
         Column summed to produce predicted incremental conversions.
     fractions:
-        Grid of fractions in $(0, 1]$.
+        Grid of positive contact fractions; zero contacts are always evaluated.
 
     Returns
     -------

@@ -117,20 +117,20 @@ def uplift_curve(
     treatment: np.ndarray,
     uplift_score: np.ndarray,
 ) -> pd.DataFrame:
-    """Compute the AUUC-style cumulative uplift curve.
+    """Compute a cumulative, treatment-share-adjusted uplift curve.
 
-    Customers are sorted by predicted uplift from high to low. At each prefix
-    the curve reports
+    Customers are ranked by predicted uplift. For each top-k prefix, let
+    ``T_pos(k)`` and ``C_pos(k)`` be its treated and control conversions,
+    ``N_T`` and ``N_C`` the *full-sample* treatment-arm sizes, and ``N``
+    the full sample size. The cumulative gain is
 
-    .. math::
-        \\frac{T_+}{N_T} \\cdot N_t - \\frac{C_+}{N_C} \\cdot N_c
+    ``N * (T_pos(k) / N_T - C_pos(k) / N_C)``.
 
-    where :math:`T_+`, :math:`C_+` are cumulative treated/control conversions
-    and :math:`N_t`, :math:`N_c` are cumulative arm sizes. This is the
-    AUUC convention used by the `uplift` and `causalml` libraries — it
-    differs from the Qini curve (which scales the control term by
-    :math:`N_T / N_C`) and grows linearly under random ranking, making
-    randomized baselines easy to read off.
+    This inverse-treatment-share weighting corrects for unequal treatment
+    allocation. At the full population, the gain is ``N`` times the
+    observed treated-minus-control conversion-rate difference, measured
+    in incremental conversions. It assumes random treatment assignment;
+    observational data require appropriate propensity adjustment.
     """
 
     outcome = np.asarray(outcome).astype(float)
@@ -154,9 +154,13 @@ def uplift_curve(
     n_t = max(int(treated_cum[-1]), 1)
     n_c = max(int(control_cum[-1]), 1)
 
-    treated_rate_cum = treated_positive_cum / np.maximum(treated_cum, 1)
-    control_rate_cum = control_positive_cum / np.maximum(control_cum, 1)
-    incremental_gain = treated_rate_cum * treated_cum - control_rate_cum * control_cum
+    # Keep the *global* arm denominators fixed across all ranked prefixes.
+    # Subtracting raw arm conversions would mistake allocation imbalance
+    # for a treatment effect even when both arms convert at the same rate.
+    n_total = len(outcome)
+    incremental_gain = n_total * (
+        treated_positive_cum / n_t - control_positive_cum / n_c
+    )
     population_fraction = np.arange(1, len(outcome) + 1) / len(outcome)
 
     return pd.DataFrame(

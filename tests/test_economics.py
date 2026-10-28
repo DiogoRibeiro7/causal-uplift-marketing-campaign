@@ -64,11 +64,43 @@ def test_optimize_budget_returns_recommendation() -> None:
     assert (diffs <= 1e-9).all()
 
 
+def test_optimize_budget_can_recommend_no_contacts() -> None:
+    scored = pd.DataFrame({"uplift_score": [-0.01, -0.02]})
+    economics = CampaignEconomics(cost_per_contact=0.50, value_per_conversion=10.0)
+
+    rec = optimize_budget(scored, economics, fractions=np.array([0.5, 1.0]))
+
+    assert rec.fraction == 0.0
+    assert rec.n_selected == 0
+    assert rec.threshold_score is None
+    assert rec.targets.empty
+    assert list(rec.targets.columns) == list(scored.columns)
+    assert rec.predicted_incremental_conversions == 0.0
+    assert rec.predicted_net_profit == 0.0
+    assert rec.profit_curve.iloc[0]["fraction"] == 0.0
+    assert rec.profit_curve.iloc[0]["net_profit"] == 0.0
+
+
+def test_scenario_table_includes_no_contact_policy() -> None:
+    scored = pd.DataFrame({"uplift_score": [-0.02, -0.01]})
+    economics = {"baseline": CampaignEconomics(0.50, 10.0)}
+
+    result = scenario_table(scored, economics, fractions=np.array([0.5, 1.0]))
+
+    assert result.iloc[0]["optimal_fraction"] == 0.0
+    assert result.iloc[0]["n_selected"] == 0
+    assert result.iloc[0]["predicted_net_profit"] == 0.0
+
+
 def test_optimize_budget_rejects_invalid_fractions() -> None:
     scored = _scored_fixture(n=100)
     e = CampaignEconomics(cost_per_contact=0.10, value_per_conversion=20.0)
     with pytest.raises(ValueError, match="fractions"):
         optimize_budget(scored, e, fractions=np.array([0.0, 0.5]))
+    with pytest.raises(ValueError, match="fractions"):
+        optimize_budget(scored, e, fractions=np.array([np.nan]))
+    with pytest.raises(ValueError, match="fractions"):
+        optimize_budget(scored, e, fractions=np.array([]))
 
 
 def test_scenario_table_dimensions() -> None:
@@ -115,3 +147,41 @@ def test_export_dashboard_skips_scenarios_when_none(tmp_path) -> None:  # type: 
     e = CampaignEconomics(cost_per_contact=0.10, value_per_conversion=20.0)
     paths = export_dashboard(scored, economics=e, output_dir=tmp_path)
     assert "budget_scenarios" not in paths
+
+
+def test_export_dashboard_handles_no_contact_policy(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    scored = _scored_fixture(n=100).assign(uplift_score=-0.05)
+    economics = CampaignEconomics(cost_per_contact=0.50, value_per_conversion=10.0)
+
+    paths = export_dashboard(scored, economics=economics, output_dir=tmp_path)
+
+    targets = pd.read_csv(paths["recommended_targets"])
+    summary = json.loads(paths["model_summary"].read_text())
+    report = paths["policy_report"].read_text()
+    card = paths["model_card"].read_text()
+    assert targets["in_recommendation"].sum() == 0
+    assert summary["recommendation"]["n_selected"] == 0
+    assert summary["recommendation"]["threshold_score"] is None
+    assert "contact no customers" in report
+    assert "Cut-off uplift score: n/a" in report
+    assert "Cut-off uplift score: n/a" in card
+
+
+def test_export_dashboard_selects_exactly_n_customers_at_tied_scores(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    scored = _scored_fixture(n=100).assign(uplift_score=0.10)
+    economics = CampaignEconomics(cost_per_contact=0.10, value_per_conversion=10.0)
+
+    paths = export_dashboard(
+        scored,
+        economics=economics,
+        output_dir=tmp_path,
+        fractions=[0.25],
+        write_figures=False,
+        write_model_card_md=False,
+        write_policy_report_md=False,
+    )
+
+    targets = pd.read_csv(paths["recommended_targets"])
+    summary = json.loads(paths["model_summary"].read_text())
+    assert summary["recommendation"]["n_selected"] == 25
+    assert targets["in_recommendation"].sum() == 25

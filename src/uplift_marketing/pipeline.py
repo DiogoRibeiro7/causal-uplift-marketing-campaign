@@ -59,9 +59,10 @@ def export_dashboard(
 
     - ``recommended_targets.csv`` — customer-level table sorted by uplift
       score, with the segment label and the recommended action joined in.
-      The selection cut-off matches the profit-optimal budget under the
-      supplied economics; rows above the cut-off carry
-      ``in_recommendation = 1``.
+      The selection count matches the profit-optimal budget under the
+      supplied economics; exactly those rows carry
+      ``in_recommendation = 1``, including when scores are tied or the
+      no-contact policy wins.
     - ``profit_curve.csv`` — full predicted-profit sweep over the budget
       grid.
     - ``budget_scenarios.csv`` — scenario-table output across multiple
@@ -124,9 +125,13 @@ def export_dashboard(
     deduped = [c for c in target_columns if not (c in seen or seen.add(c))]
 
     targets_full = scored.sort_values(score_col, ascending=False).copy()
-    targets_full["in_recommendation"] = (
-        targets_full[score_col] >= recommendation.threshold_score
-    ).astype(int)
+    # Select by ranked position, not score threshold: tied scores at the
+    # boundary must not increase the budget or overstate the CRM target list.
+    targets_full["in_recommendation"] = 0
+    targets_full.iloc[
+        : recommendation.n_selected,
+        targets_full.columns.get_loc("in_recommendation"),
+    ] = 1
     if "campaign_segment" in scored.columns:
         action_table = campaign_action_table(scored)
         action_map = dict(

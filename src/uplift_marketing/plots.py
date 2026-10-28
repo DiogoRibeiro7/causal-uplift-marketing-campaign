@@ -255,9 +255,10 @@ def fig_uplift_curve(
 ) -> plt.Figure:
     """Cumulative population-rescaled uplift curve (AUUC).
 
-    Uplift curve is the population-rescaled cousin of Qini: the y-axis
-    rescales the cumulative incremental gain so curves from samples of
-    different size remain comparable.
+    The curve uses the full-sample treatment and control shares to
+    estimate cumulative incremental conversions, including when the
+    experiment's arms are unequally sized. It remains population-sized,
+    so compare different sample sizes only after appropriate scaling.
     """
 
     auc = uplift_curve(
