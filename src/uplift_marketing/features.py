@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Sequence
+from typing import Any, Sequence, cast
 
 import numpy as np
 import pandas as pd
+from numpy.typing import NDArray
 from sklearn.compose import ColumnTransformer
 from sklearn.impute import SimpleImputer
 from sklearn.model_selection import train_test_split
@@ -97,7 +98,11 @@ def split_features_treatment_outcome(
 ) -> tuple[pd.DataFrame, pd.Series, pd.Series]:
     """Split a frame into features, treatment, and outcome."""
 
-    missing = [column for column in [*spec.feature_columns, treatment_col, outcome_col] if column not in data]
+    missing = [
+        column
+        for column in [*spec.feature_columns, treatment_col, outcome_col]
+        if column not in data
+    ]
     if missing:
         raise ValueError(f"Missing columns required for modelling: {missing}")
 
@@ -108,12 +113,12 @@ def split_features_treatment_outcome(
 
 
 def honest_train_test_split(
-    *arrays: pd.DataFrame | pd.Series | np.ndarray,
-    treatment: pd.Series | np.ndarray,
-    outcome: pd.Series | np.ndarray | None = None,
+    *arrays: pd.DataFrame | pd.Series | NDArray[Any],
+    treatment: pd.Series | NDArray[Any],
+    outcome: pd.Series | NDArray[Any] | None = None,
     test_size: float = 0.30,
     random_state: int = 42,
-) -> tuple:
+) -> list[pd.DataFrame | pd.Series | NDArray[Any]]:
     """Split arrays into train and test, preserving treatment-arm balance.
 
     A naive random split can over- or under-represent one arm in the test
@@ -158,9 +163,14 @@ def honest_train_test_split(
     else:
         stratify = treatment_arr
 
-    return train_test_split(
-        *arrays,
-        test_size=test_size,
-        random_state=random_state,
-        stratify=stratify,
+    # sklearn returns a list alternating train/test slices for each input.
+    # Cast the broad upstream stub to the input types preserved by the split.
+    return cast(
+        list[pd.DataFrame | pd.Series | NDArray[Any]],
+        train_test_split(
+            *arrays,
+            test_size=test_size,
+            random_state=random_state,
+            stratify=stratify,
+        ),
     )

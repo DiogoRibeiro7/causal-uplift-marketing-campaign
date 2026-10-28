@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
 import pandas as pd
+from numpy.typing import NDArray
 from sklearn.metrics import auc, roc_auc_score
 
 
-def response_auc(y_true: np.ndarray, y_score: np.ndarray) -> float:
+def response_auc(y_true: NDArray[Any], y_score: NDArray[Any]) -> float:
     """Return ROC-AUC for a standard response model."""
 
     if len(np.unique(y_true)) < 2:
@@ -16,9 +19,9 @@ def response_auc(y_true: np.ndarray, y_score: np.ndarray) -> float:
 
 
 def qini_curve(
-    outcome: np.ndarray,
-    treatment: np.ndarray,
-    uplift_score: np.ndarray,
+    outcome: NDArray[Any],
+    treatment: NDArray[Any],
+    uplift_score: NDArray[Any],
 ) -> pd.DataFrame:
     """Compute a simple Qini-style cumulative uplift curve.
 
@@ -113,9 +116,9 @@ def policy_value_at_fraction(
 
 
 def uplift_curve(
-    outcome: np.ndarray,
-    treatment: np.ndarray,
-    uplift_score: np.ndarray,
+    outcome: NDArray[Any],
+    treatment: NDArray[Any],
+    uplift_score: NDArray[Any],
 ) -> pd.DataFrame:
     """Compute a cumulative, treatment-share-adjusted uplift curve.
 
@@ -186,9 +189,9 @@ def area_under_uplift(curve: pd.DataFrame) -> float:
 
 
 def normalized_qini(
-    outcome: np.ndarray,
-    treatment: np.ndarray,
-    uplift_score: np.ndarray,
+    outcome: NDArray[Any],
+    treatment: NDArray[Any],
+    uplift_score: NDArray[Any],
 ) -> dict[str, float]:
     """Return the area under the Qini curve normalized to ``[0, 1]``.
 
@@ -288,7 +291,6 @@ def bootstrap_policy_value(
     boot_profit = np.empty(n_boot, dtype=float) if cost_per_contact is not None else None
 
     n = len(data)
-    have_economics = cost_per_contact is not None and value_per_conversion is not None
     for i in range(n_boot):
         idx = rng.integers(0, n, size=n)
         sample = data.iloc[idx]
@@ -300,7 +302,7 @@ def bootstrap_policy_value(
             fraction=fraction,
         )
         boot_uplift[i] = result["observed_uplift"]
-        if have_economics:
+        if cost_per_contact is not None and value_per_conversion is not None:
             n_sel = result["selected_n"]
             assert boot_profit is not None
             boot_profit[i] = (

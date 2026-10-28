@@ -10,7 +10,9 @@ from uplift_marketing.data import generate_synthetic_uplift_data, save_csv
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--rows", type=int, default=5_000, help="Number of synthetic rows to generate.")
+    parser.add_argument(
+        "--rows", type=int, default=5_000, help="Number of synthetic rows to generate."
+    )
     parser.add_argument(
         "--output",
         type=Path,

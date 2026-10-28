@@ -15,9 +15,11 @@ composes with the rest of the pipeline.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 import pandas as pd
+from numpy.typing import NDArray
 
 
 @dataclass(frozen=True)
@@ -48,9 +50,9 @@ class CampaignEconomics:
 
     def net_profit(
         self,
-        incremental_conversions: float | np.ndarray,
-        n_contacts: float | np.ndarray,
-    ) -> float | np.ndarray:
+        incremental_conversions: float | NDArray[Any],
+        n_contacts: float | NDArray[Any],
+    ) -> float | NDArray[Any]:
         """Net profit given expected incremental conversions and contact count."""
 
         revenue = np.asarray(incremental_conversions, dtype=float) * self.value_per_conversion
@@ -132,7 +134,7 @@ def optimize_budget(
     *,
     score_col: str = "uplift_score",
     uplift_col: str = "uplift_score",
-    fractions: np.ndarray | None = None,
+    fractions: NDArray[Any] | None = None,
 ) -> BudgetRecommendation:
     """Pick the top-fraction that maximises predicted net profit.
 
@@ -206,7 +208,7 @@ def scenario_table(
     *,
     policies: dict[str, str] | None = None,
     uplift_col: str = "uplift_score",
-    fractions: np.ndarray | None = None,
+    fractions: NDArray[Any] | None = None,
 ) -> pd.DataFrame:
     """Sweep policy x economics combinations and report each optimum.
 

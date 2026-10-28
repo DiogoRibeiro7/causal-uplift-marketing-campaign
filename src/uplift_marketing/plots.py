@@ -11,13 +11,17 @@ whole set and writes PNGs under ``output_dir``.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import matplotlib as mpl
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
 import numpy as np
 import pandas as pd
+from matplotlib.figure import Figure
 
 from uplift_marketing.evaluation import qini_curve, uplift_curve
 from uplift_marketing.uplift import make_uplift_deciles, uplift_by_group
@@ -54,10 +58,14 @@ _PLOT_STYLE: dict[str, object] = {
 }
 
 
-def _styled() -> plt.rc_context:
+@contextmanager
+def _styled() -> Iterator[None]:
     """Apply the project's matplotlib style without mutating globals."""
 
-    return plt.rc_context(_PLOT_STYLE)
+    # The Matplotlib stub enumerates literal rcParams keys, while this
+    # reusable style is kept as a runtime-validated dictionary.
+    with mpl.rc_context(_PLOT_STYLE):  # type: ignore[arg-type]
+        yield
 
 
 def fig_qini_curve(
@@ -67,7 +75,7 @@ def fig_qini_curve(
     outcome_col: str = "conversion",
     uplift_col: str = "uplift_score",
     title: str | None = None,
-) -> plt.Figure:
+) -> Figure:
     """Qini curve: cumulative incremental conversions vs targeted fraction.
 
     The diagonal is the random-targeting baseline; the model curve sitting
@@ -107,7 +115,7 @@ def fig_profit_curve(
     economics: CampaignEconomics,
     *,
     title: str | None = None,
-) -> plt.Figure:
+) -> Figure:
     """Predicted net profit vs targeted fraction with the optimum marked.
 
     The curve typically rises early (high-uplift customers pay for their
@@ -151,7 +159,7 @@ def fig_uplift_by_decile(
     outcome_col: str = "conversion",
     uplift_col: str = "uplift_score",
     title: str | None = None,
-) -> plt.Figure:
+) -> Figure:
     """Observed treated-control uplift by uplift-score decile.
 
     Decile 1 contains the highest-predicted-uplift customers. A
@@ -195,7 +203,7 @@ def fig_scenarios(
     *,
     currency: str = "EUR",
     title: str | None = None,
-) -> plt.Figure:
+) -> Figure:
     """Predicted net profit by (scenario × policy) at each policy's optimum.
 
     Reads the output of
@@ -252,7 +260,7 @@ def fig_uplift_curve(
     outcome_col: str = "conversion",
     uplift_col: str = "uplift_score",
     title: str | None = None,
-) -> plt.Figure:
+) -> Figure:
     """Cumulative population-rescaled uplift curve (AUUC).
 
     The curve uses the full-sample treatment and control shares to
@@ -312,7 +320,7 @@ def export_campaign_figures(
     out_dir.mkdir(parents=True, exist_ok=True)
     paths: dict[str, Path] = {}
 
-    figures: dict[str, plt.Figure] = {
+    figures: dict[str, Figure] = {
         "qini": fig_qini_curve(
             scored,
             treatment_col=treatment_col,

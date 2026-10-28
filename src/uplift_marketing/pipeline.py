@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import TypedDict
 
 import joblib
 import pandas as pd
@@ -34,6 +35,27 @@ from uplift_marketing.treatment import naive_average_treatment_effect, outcome_b
 from uplift_marketing.uplift import attach_uplift_scores, make_uplift_deciles, uplift_by_group
 
 
+class ModelCardOptions(TypedDict, total=False):
+    """Optional model-card metadata accepted by the dashboard exporter."""
+
+    model_name: str
+    dataset_source: str
+    feature_columns: list[str] | None
+    extra_excluded: list[str] | None
+    expected_treated_share: float
+    smd_threshold: float
+    notes: list[str] | None
+    run_randomization_check: bool
+
+
+class PolicyReportOptions(TypedDict, total=False):
+    """Optional policy-report metadata accepted by the dashboard exporter."""
+
+    model_name: str
+    dataset_source: str
+    notes: list[str] | None
+
+
 def export_dashboard(
     scored: pd.DataFrame,
     *,
@@ -47,10 +69,10 @@ def export_dashboard(
     economics_scenarios: dict[str, CampaignEconomics] | None = None,
     extra_target_columns: list[str] | None = None,
     write_model_card_md: bool = True,
-    model_card_kwargs: dict[str, object] | None = None,
+    model_card_kwargs: ModelCardOptions | None = None,
     write_figures: bool = True,
     write_policy_report_md: bool = True,
-    policy_report_kwargs: dict[str, object] | None = None,
+    policy_report_kwargs: PolicyReportOptions | None = None,
 ) -> dict[str, Path]:
     """Write dashboard-ready output tables to ``output_dir``.
 
@@ -121,8 +143,8 @@ def export_dashboard(
     ]
     if extra_target_columns:
         target_columns += [c for c in extra_target_columns if c in scored.columns]
-    seen: set[str] = set()
-    deduped = [c for c in target_columns if not (c in seen or seen.add(c))]
+    # dict preserves first-seen order while removing duplicated column names.
+    deduped = list(dict.fromkeys(target_columns))
 
     targets_full = scored.sort_values(score_col, ascending=False).copy()
     # Select by ranked position, not score threshold: tied scores at the
@@ -215,6 +237,7 @@ def export_dashboard(
         paths["budget_scenarios"] = scenarios_path
 
     if write_model_card_md:
+        card_options: ModelCardOptions = model_card_kwargs or {}
         card = build_model_card(
             scored,
             economics=economics,
@@ -222,7 +245,7 @@ def export_dashboard(
             treatment_col=treatment_col,
             outcome_col=outcome_col,
             uplift_col=uplift_col,
-            **(model_card_kwargs or {}),
+            **card_options,
         )
         paths["model_card"] = write_model_card(card, output_dir / "model_card.md")
 
@@ -242,6 +265,7 @@ def export_dashboard(
             paths[f"figure_{label}"] = path
 
     if write_policy_report_md:
+        report_options: PolicyReportOptions = policy_report_kwargs or {}
         report = build_policy_report(
             scored,
             economics=economics,
@@ -252,7 +276,7 @@ def export_dashboard(
             treatment_col=treatment_col,
             outcome_col=outcome_col,
             uplift_col=uplift_col,
-            **(policy_report_kwargs or {}),
+            **report_options,
         )
         paths["policy_report"] = write_policy_report(
             report, output_dir / "policy_report.md"
@@ -331,6 +355,7 @@ def run_pipeline(
         stratify=treatment.astype(str) + "_" + outcome.astype(str),
     )
 
+    model: SLearner | TLearner
     if model_name == "s_learner":
         model = SLearner(spec=spec, random_state=config.random_state)
     elif model_name == "t_learner":

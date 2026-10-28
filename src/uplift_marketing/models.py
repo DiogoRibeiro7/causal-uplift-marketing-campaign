@@ -7,10 +7,11 @@ learning, auditing, and policy evaluation rather than maximum leaderboard score.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable, Protocol
+from typing import Any, Callable, Protocol, TypeAlias
 
 import numpy as np
 import pandas as pd
+from numpy.typing import NDArray
 from sklearn.base import BaseEstimator, ClassifierMixin, RegressorMixin, clone
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.ensemble import RandomForestClassifier
@@ -20,15 +21,14 @@ from sklearn.pipeline import Pipeline
 
 from uplift_marketing.features import FeatureSpec, build_preprocessor
 
-
-ArrayLike = np.ndarray | pd.Series
+ArrayLike: TypeAlias = NDArray[Any] | pd.Series
 
 
 class UpliftMetaLearner(Protocol):
     """Structural interface every meta-learner in this module exposes."""
 
-    def fit(self, x: pd.DataFrame, treatment: ArrayLike, y: ArrayLike) -> "UpliftMetaLearner": ...
-    def predict_uplift(self, x: pd.DataFrame) -> np.ndarray: ...
+    def fit(self, x: pd.DataFrame, treatment: ArrayLike, y: ArrayLike) -> UpliftMetaLearner: ...
+    def predict_uplift(self, x: pd.DataFrame) -> NDArray[Any]: ...
 
 
 def make_base_classifier(random_state: int = 42) -> ClassifierMixin:
@@ -50,13 +50,16 @@ def make_black_box_classifier(random_state: int = 42) -> ClassifierMixin:
     )
 
 
-def _positive_class_probability(model: BaseEstimator, x: pd.DataFrame) -> np.ndarray:
+def _positive_class_probability(model: BaseEstimator, x: pd.DataFrame) -> NDArray[Any]:
     """Return positive-class probabilities from a fitted classifier."""
 
-    if not hasattr(model, "predict_proba"):
+    predict_proba = getattr(model, "predict_proba", None)
+    if not callable(predict_proba):
         raise TypeError("The model must expose predict_proba")
 
-    probabilities = model.predict_proba(x)  # type: ignore[attr-defined]
+    probabilities = np.asarray(predict_proba(x), dtype=float)
+    if probabilities.ndim != 2:
+        raise ValueError("predict_proba must return a two-dimensional array")
     if probabilities.shape[1] == 1:
         # Degenerate training fold with one class. Return the only probability.
         return probabilities[:, 0]
@@ -82,7 +85,7 @@ class SLearner:
             self.base_model = make_base_classifier(self.random_state)
         self.pipeline_: Pipeline | None = None
 
-    def fit(self, x: pd.DataFrame, treatment: ArrayLike, y: ArrayLike) -> "SLearner":
+    def fit(self, x: pd.DataFrame, treatment: ArrayLike, y: ArrayLike) -> SLearner:
         """Fit the S-learner."""
 
         if len(x) != len(treatment) or len(x) != len(y):
@@ -105,7 +108,7 @@ class SLearner:
         self.pipeline_.fit(training_frame, np.asarray(y).astype(int))
         return self
 
-    def predict_potential_outcomes(self, x: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
+    def predict_potential_outcomes(self, x: pd.DataFrame) -> tuple[NDArray[Any], NDArray[Any]]:
         """Return predicted probabilities under control and treatment."""
 
         if self.pipeline_ is None:
@@ -120,11 +123,11 @@ class SLearner:
         p_treated = _positive_class_probability(self.pipeline_, treated)
         return p_control, p_treated
 
-    def predict_uplift(self, x: pd.DataFrame) -> np.ndarray:
+    def predict_uplift(self, x: pd.DataFrame) -> NDArray[Any]:
         """Predict individual uplift scores."""
 
         p_control, p_treated = self.predict_potential_outcomes(x)
-        return p_treated - p_control
+        return np.asarray(p_treated - p_control, dtype=float)
 
 
 def make_uplift_regressor(random_state: int = 42) -> RegressorMixin:
@@ -191,7 +194,7 @@ class TLearner:
         self.treated_pipeline_: Pipeline | None = None
         self.control_pipeline_: Pipeline | None = None
 
-    def fit(self, x: pd.DataFrame, treatment: ArrayLike, y: ArrayLike) -> "TLearner":
+    def fit(self, x: pd.DataFrame, treatment: ArrayLike, y: ArrayLike) -> TLearner:
         """Fit separate treated and control outcome models."""
 
         if len(x) != len(treatment) or len(x) != len(y):
@@ -222,7 +225,7 @@ class TLearner:
         self.control_pipeline_.fit(x.loc[control_mask], y_array[control_mask])
         return self
 
-    def predict_potential_outcomes(self, x: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
+    def predict_potential_outcomes(self, x: pd.DataFrame) -> tuple[NDArray[Any], NDArray[Any]]:
         """Return predicted probabilities under control and treatment."""
 
         if self.treated_pipeline_ is None or self.control_pipeline_ is None:
@@ -232,11 +235,11 @@ class TLearner:
         p_treated = _positive_class_probability(self.treated_pipeline_, x)
         return p_control, p_treated
 
-    def predict_uplift(self, x: pd.DataFrame) -> np.ndarray:
+    def predict_uplift(self, x: pd.DataFrame) -> NDArray[Any]:
         """Predict individual uplift scores."""
 
         p_control, p_treated = self.predict_potential_outcomes(x)
-        return p_treated - p_control
+        return np.asarray(p_treated - p_control, dtype=float)
 
 
 @dataclass
@@ -273,7 +276,7 @@ class XLearner:
         self.treated_effect_pipeline_: Pipeline | None = None
         self.control_effect_pipeline_: Pipeline | None = None
 
-    def fit(self, x: pd.DataFrame, treatment: ArrayLike, y: ArrayLike) -> "XLearner":
+    def fit(self, x: pd.DataFrame, treatment: ArrayLike, y: ArrayLike) -> XLearner:
         """Fit the X-learner on randomized treatment/control data."""
 
         if len(x) != len(treatment) or len(x) != len(y):
@@ -331,7 +334,7 @@ class XLearner:
         self.control_effect_pipeline_.fit(x_control, d_control)
         return self
 
-    def predict_potential_outcomes(self, x: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
+    def predict_potential_outcomes(self, x: pd.DataFrame) -> tuple[NDArray[Any], NDArray[Any]]:
         """Return Stage 1 outcome probabilities under control and treatment.
 
         These are the T-learner-style predictions used internally; the X-learner
@@ -350,8 +353,8 @@ class XLearner:
         self,
         x: pd.DataFrame,
         *,
-        propensity: float | np.ndarray = 0.5,
-    ) -> np.ndarray:
+        propensity: float | NDArray[Any] = 0.5,
+    ) -> NDArray[Any]:
         """Predict individual uplift scores using the blended effect models.
 
         Parameters
@@ -367,8 +370,8 @@ class XLearner:
         if self.treated_effect_pipeline_ is None or self.control_effect_pipeline_ is None:
             raise RuntimeError("Model is not fitted")
 
-        tau_treated = self.treated_effect_pipeline_.predict(x)
-        tau_control = self.control_effect_pipeline_.predict(x)
+        tau_treated = np.asarray(self.treated_effect_pipeline_.predict(x), dtype=float)
+        tau_control = np.asarray(self.control_effect_pipeline_.predict(x), dtype=float)
 
         g = np.asarray(propensity, dtype=float)
         if g.ndim == 0:
@@ -381,7 +384,7 @@ class XLearner:
         # Künzel et al. weight: blend the two effect models by propensity.
         # Weighting puts more mass on the arm with more samples relative to the
         # population, which is the arm whose pseudo-effect is more reliable.
-        return g * tau_control + (1.0 - g) * tau_treated
+        return np.asarray(g * tau_control + (1.0 - g) * tau_treated, dtype=float)
 
 
 def cross_fit_uplift_oof(
@@ -392,7 +395,7 @@ def cross_fit_uplift_oof(
     *,
     n_splits: int = 5,
     random_state: int = 42,
-) -> np.ndarray:
+) -> NDArray[Any]:
     """Out-of-fold uplift predictions via stratified K-fold cross-fitting.
 
     Partitions the data into K folds stratified on the joint
@@ -495,9 +498,9 @@ class DRLearner:
         if not 0 < clip_lo < clip_hi < 1:
             raise ValueError("propensity_clip must satisfy 0 < lo < hi < 1")
         self.effect_pipeline_: Pipeline | None = None
-        self.cross_fit_pseudo_outcomes_: np.ndarray | None = None
+        self.cross_fit_pseudo_outcomes_: NDArray[Any] | None = None
 
-    def fit(self, x: pd.DataFrame, treatment: ArrayLike, y: ArrayLike) -> "DRLearner":
+    def fit(self, x: pd.DataFrame, treatment: ArrayLike, y: ArrayLike) -> DRLearner:
         """Fit the DR-learner via cross-fitted pseudo-outcomes."""
 
         x_local = x.reset_index(drop=True)
@@ -579,7 +582,7 @@ class DRLearner:
         self.effect_pipeline_.fit(x_local, pseudo)
         return self
 
-    def predict_uplift(self, x: pd.DataFrame) -> np.ndarray:
+    def predict_uplift(self, x: pd.DataFrame) -> NDArray[Any]:
         """Predict uplift via the second-stage regressor."""
 
         if self.effect_pipeline_ is None:

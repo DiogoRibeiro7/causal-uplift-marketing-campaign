@@ -11,10 +11,9 @@ import sys
 from pathlib import Path
 
 import matplotlib as mpl
-import matplotlib.pyplot as plt
+from matplotlib.figure import Figure
 
 from uplift_marketing.config import DEFAULT_CONFIG, ProjectConfig
-
 
 PLOT_STYLE = {
     "figure.figsize": (8.0, 4.5),
@@ -62,12 +61,14 @@ def setup_notebook(config: ProjectConfig = DEFAULT_CONFIG) -> ProjectConfig:
     config.figures_dir.mkdir(parents=True, exist_ok=True)
     config.reports_dir.mkdir(parents=True, exist_ok=True)
 
-    mpl.rcParams.update(PLOT_STYLE)
+    # Matplotlib's typed rcParams key literals cannot describe a dynamic
+    # dictionary, but Matplotlib validates the keys and values at runtime.
+    mpl.rcParams.update(PLOT_STYLE)  # type: ignore[arg-type]
     return config
 
 
 def save_figure(
-    fig: plt.Figure,
+    fig: Figure,
     name: str,
     *,
     config: ProjectConfig = DEFAULT_CONFIG,
