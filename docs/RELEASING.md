@@ -50,9 +50,10 @@ and the [GitHub environment protection guide](https://docs.github.com/en/actions
    - Publish the already-checked artifacts to PyPI using Trusted Publishing.
 5. Confirm the new version on PyPI and test installation in a clean environment.
 
-The release workflow is not triggered by ordinary pushes, pull requests, or
-prerelease GitHub Releases. Do not create a GitHub Release until the PyPI
-publisher and protected environment have been configured.
+The release workflow is not triggered by ordinary pushes or pull requests.
+Prerelease GitHub Releases may start a workflow run, but both jobs are skipped.
+Do not create a stable GitHub Release until the PyPI publisher and protected
+environment have been configured.
 
 To verify local release artifacts before creating a tag:
 
