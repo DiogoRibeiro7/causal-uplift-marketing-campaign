@@ -47,7 +47,7 @@ This project uses [Poetry](https://python-poetry.org/). After cloning:
 
 ```bash
 poetry install
-poetry run pytest                  # 78 tests
+poetry run pytest                  # unit and regression tests
 ```
 
 To explore the notebooks, install the optional JupyterLab group:
@@ -84,7 +84,9 @@ poetry build
 ```
 
 This creates both artifacts under `dist/`. CI verifies that they build;
-publishing to PyPI is a separate release action.
+publishing to PyPI is a separate release action. For the guarded GitHub
+Release workflow and Trusted Publisher setup, see
+[the release guide](docs/RELEASING.md).
 
 ### Programmatic use
 
@@ -247,7 +249,7 @@ estimates as ground truth, and score leakage into other systems.
 ## Tests
 
 ```bash
-poetry run pytest      # 69 tests, ~3 seconds
+poetry run pytest      # full test suite
 poetry run ruff check  # project lint config
 ```
 
