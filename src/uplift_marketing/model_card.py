@@ -450,15 +450,18 @@ def _recommendation_section(card: ModelCard) -> list[str]:
         out.append("")
         return out
 
+    cutoff = f"`{rec.threshold_score:+.4f}`" if rec.threshold_score is not None else "n/a"
     out.extend(
         [
             f"- Recommended top fraction: **{rec.fraction:.4f}**",
             f"- Customers to contact: **{rec.n_selected:,}**",
-            f"- Cut-off uplift score: `{rec.threshold_score:+.4f}`",
+            f"- Cut-off uplift score: {cutoff}",
             f"- Predicted incremental conversions: {rec.predicted_incremental_conversions:.2f}",
             f"- Predicted net profit: **{economics.currency} {rec.predicted_net_profit:,.2f}**",
             "",
-            "These are the model's **belief** about the campaign's economics. "
+            "A zero-contact policy is a valid recommendation when all "
+            "evaluated contact policies have non-positive predicted profit. "
+            "These figures are the model's **belief** about the campaign's economics. "
             "Realised economics will diverge from predictions whenever the "
             "model is mis-calibrated; see the calibration analysis in NB06 "
             "before quoting predicted profit to stakeholders.",

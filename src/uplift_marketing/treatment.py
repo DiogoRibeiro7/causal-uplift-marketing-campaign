@@ -8,7 +8,9 @@ import numpy as np
 import pandas as pd
 
 
-def treatment_balance_table(data: pd.DataFrame, *, treatment_col: str = "treatment") -> pd.DataFrame:
+def treatment_balance_table(
+    data: pd.DataFrame, *, treatment_col: str = "treatment"
+) -> pd.DataFrame:
     """Return treatment/control counts and proportions."""
 
     if treatment_col not in data:

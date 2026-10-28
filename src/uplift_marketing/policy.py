@@ -5,7 +5,6 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-
 ACTION_MAP = {
     "persuadable": "Target with campaign. These customers appear responsive to treatment.",
     "sure_thing": "Avoid aggressive targeting. They may convert without paid intervention.",
@@ -59,7 +58,9 @@ def assign_campaign_segments(
 
     positive_uplift = uplift[uplift > 0]
     if high_uplift_threshold is None:
-        high_uplift_threshold = float(positive_uplift.quantile(0.75)) if len(positive_uplift) else 0.0
+        high_uplift_threshold = (
+            float(positive_uplift.quantile(0.75)) if len(positive_uplift) else 0.0
+        )
 
     segment = np.full(len(scored), "review", dtype=object)
     segment[uplift < 0] = "do_not_disturb"
@@ -70,7 +71,9 @@ def assign_campaign_segments(
     return pd.Series(segment, index=scored.index, name="campaign_segment")
 
 
-def campaign_action_table(scored: pd.DataFrame, *, segment_col: str = "campaign_segment") -> pd.DataFrame:
+def campaign_action_table(
+    scored: pd.DataFrame, *, segment_col: str = "campaign_segment"
+) -> pd.DataFrame:
     """Summarize segment sizes, uplift scores, and recommended actions."""
 
     if segment_col not in scored:

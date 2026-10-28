@@ -48,13 +48,37 @@ def test_uplift_curve_terminates_at_total_gain(synthetic_data) -> None:  # type:
         treatment=synthetic_data["treatment"].to_numpy(),
         uplift_score=synthetic_data["discount_affinity"].to_numpy(),
     )
-    n_t = synthetic_data.loc[synthetic_data.treatment == 1, "conversion"].sum()
-    n_c = synthetic_data.loc[synthetic_data.treatment == 0, "conversion"].sum()
-    # AUUC ending value = treated_positives - control_positives.
-    expected_end = float(n_t - n_c)
+    treated_rate = synthetic_data.loc[synthetic_data.treatment == 1, "conversion"].mean()
+    control_rate = synthetic_data.loc[synthetic_data.treatment == 0, "conversion"].mean()
+    # Full-population incremental conversions adjust for the treatment share.
+    expected_end = float(len(synthetic_data) * (treated_rate - control_rate))
     assert curve["incremental_gain"].iloc[-1] == pytest.approx(expected_end, rel=1e-9)
     auuc = area_under_uplift(curve)
     assert isinstance(auuc, float)
+
+
+def test_uplift_curve_does_not_confuse_arm_imbalance_with_effect() -> None:
+    # Both arms have a 100% conversion rate, despite a 2:1 allocation.
+    treatment = np.r_[np.ones(200, dtype=int), np.zeros(100, dtype=int)]
+    outcome = np.ones(300, dtype=int)
+    scores = np.linspace(1, 0, 300)
+
+    curve = uplift_curve(outcome=outcome, treatment=treatment, uplift_score=scores)
+
+    assert curve["incremental_gain"].iloc[-1] == pytest.approx(0.0)
+    assert curve["n_treated_total"].iloc[-1] == 200
+    assert curve["n_control_total"].iloc[-1] == 100
+
+
+def test_uplift_curve_uses_conversion_rates_not_raw_counts() -> None:
+    treatment = np.r_[np.ones(4, dtype=int), np.zeros(2, dtype=int)]
+    outcome = np.array([1, 1, 1, 0, 1, 0], dtype=int)
+    scores = np.arange(6, dtype=float)
+
+    curve = uplift_curve(outcome=outcome, treatment=treatment, uplift_score=scores)
+
+    # N * (treated conversion rate - control conversion rate) = 6 * (0.75 - 0.5).
+    assert curve["incremental_gain"].iloc[-1] == pytest.approx(1.5)
 
 
 def test_normalized_qini_bounded_below_oracle(synthetic_data) -> None:  # type: ignore[no-untyped-def]

@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
 import pandas as pd
+from numpy.typing import NDArray
 
 
 def attach_uplift_scores(
     data: pd.DataFrame,
     *,
-    p_control: np.ndarray,
-    p_treated: np.ndarray,
+    p_control: NDArray[Any],
+    p_treated: NDArray[Any],
     uplift_col: str = "uplift_score",
 ) -> pd.DataFrame:
     """Return data with potential outcome probabilities and uplift scores."""
@@ -105,6 +108,7 @@ def subgroup_uplift_with_ci(
         raise ValueError(f"Missing columns: {missing}")
 
     from math import sqrt
+
     from scipy.stats import norm
 
     z = float(norm.ppf(1.0 - (1.0 - confidence) / 2.0))

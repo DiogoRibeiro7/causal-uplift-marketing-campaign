@@ -41,7 +41,9 @@ def parse_args() -> argparse.Namespace:
         choices=["criteo", "kaggle", "hillstrom"],
         default="hillstrom",
     )
-    parser.add_argument("--url", default=DEFAULT_CRITEO_URL, help="Direct URL used when source=criteo.")
+    parser.add_argument(
+        "--url", default=DEFAULT_CRITEO_URL, help="Direct URL used when source=criteo."
+    )
     parser.add_argument(
         "--slug",
         default=None,
