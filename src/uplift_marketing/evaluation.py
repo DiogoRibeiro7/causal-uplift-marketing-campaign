@@ -271,8 +271,12 @@ def bootstrap_policy_value(
     Resamples the input dataframe with replacement ``n_boot`` times. On
     each resample, applies the same top-``fraction`` selection rule and
     records the within-segment treated-control gap. If ``cost_per_contact``
-    and ``value_per_conversion`` are provided, also reports the bootstrap
-    distribution of realised net profit for the same selection.
+    and ``value_per_conversion`` are both provided, also reports the bootstrap
+    distribution of realised net profit for the same selection. Resamples
+    without both arms or finite outcome rates in the selected segment are
+    excluded from the interval; ``n_valid_boot`` and ``n_invalid_boot`` make
+    that limitation explicit.
+    At least two valid resamples are required.
     """
 
     if not 0 < fraction <= 1:
@@ -281,13 +285,38 @@ def bootstrap_policy_value(
         raise ValueError("confidence must be in (0, 1)")
     if n_boot < 2:
         raise ValueError("n_boot must be >= 2")
+    if data.empty:
+        raise ValueError("data must not be empty")
+    if (cost_per_contact is None) != (value_per_conversion is None):
+        raise ValueError("cost_per_contact and value_per_conversion must be provided together")
+    if cost_per_contact is not None and (
+        not np.isfinite(cost_per_contact) or cost_per_contact < 0
+    ):
+        raise ValueError("cost_per_contact must be finite and non-negative")
+    if value_per_conversion is not None and (
+        not np.isfinite(value_per_conversion) or value_per_conversion <= 0
+    ):
+        raise ValueError("value_per_conversion must be finite and positive")
 
     missing = [c for c in (uplift_col, treatment_col, outcome_col) if c not in data]
     if missing:
         raise ValueError(f"Missing columns: {missing}")
 
+    original_policy = policy_value_at_fraction(
+        data,
+        uplift_col=uplift_col,
+        treatment_col=treatment_col,
+        outcome_col=outcome_col,
+        fraction=fraction,
+    )
+    if not np.isfinite(original_policy["observed_uplift"]):
+        raise ValueError(
+            "top-fraction selection requires both treatment arms and finite outcome rates"
+        )
+
     rng = np.random.default_rng(random_state)
     boot_uplift = np.empty(n_boot, dtype=float)
+    # Allocate profit samples only when both economics inputs are available.
     boot_profit = np.empty(n_boot, dtype=float) if cost_per_contact is not None else None
 
     n = len(data)
@@ -302,27 +331,42 @@ def bootstrap_policy_value(
             fraction=fraction,
         )
         boot_uplift[i] = result["observed_uplift"]
-        if cost_per_contact is not None and value_per_conversion is not None:
+        if boot_profit is not None:
             n_sel = result["selected_n"]
-            assert boot_profit is not None
+            assert cost_per_contact is not None and value_per_conversion is not None
             boot_profit[i] = (
                 result["observed_uplift"] * n_sel * value_per_conversion
                 - n_sel * cost_per_contact
             )
 
+    # Percentiles on NaN-containing arrays are NaN even when most draws are
+    # usable. Preserve the number of discarded draws so interval reliability
+    # is visible rather than silently reported as a fully supported CI.
+    valid_mask = np.isfinite(boot_uplift)
+    n_valid = int(valid_mask.sum())
+    if n_valid < 2:
+        raise ValueError(
+            "fewer than two bootstrap resamples have both treatment arms and "
+            "finite outcome rates in the selected segment; increase the sample "
+            "size or contact fraction"
+        )
+    valid_uplift = boot_uplift[valid_mask]
     alpha = (1.0 - confidence) / 2.0
-    ci_low_u, ci_high_u = np.quantile(boot_uplift, [alpha, 1.0 - alpha])
+    ci_low_u, ci_high_u = np.quantile(valid_uplift, [alpha, 1.0 - alpha])
     summary: dict[str, float] = {
         "fraction": fraction,
         "n_boot": float(n_boot),
-        "uplift_mean": float(np.nanmean(boot_uplift)),
+        "n_valid_boot": float(n_valid),
+        "n_invalid_boot": float(n_boot - n_valid),
+        "uplift_mean": float(np.mean(valid_uplift)),
         "uplift_ci_low": float(ci_low_u),
         "uplift_ci_high": float(ci_high_u),
     }
     if boot_profit is not None:
-        ci_low_p, ci_high_p = np.quantile(boot_profit, [alpha, 1.0 - alpha])
+        valid_profit = boot_profit[valid_mask]
+        ci_low_p, ci_high_p = np.quantile(valid_profit, [alpha, 1.0 - alpha])
         summary.update(
-            profit_mean=float(np.nanmean(boot_profit)),
+            profit_mean=float(np.mean(valid_profit)),
             profit_ci_low=float(ci_low_p),
             profit_ci_high=float(ci_high_p),
         )

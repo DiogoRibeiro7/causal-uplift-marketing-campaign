@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pandas as pd
 import pytest
 
 from uplift_marketing.evaluation import (
@@ -135,3 +136,117 @@ def test_bootstrap_policy_value_rejects_invalid_fraction(synthetic_data) -> None
     data = synthetic_data.assign(uplift_score=synthetic_data["discount_affinity"])
     with pytest.raises(ValueError, match="fraction"):
         bootstrap_policy_value(data, fraction=0.0)
+
+
+def test_bootstrap_policy_value_skips_resamples_without_both_arms() -> None:
+    # Small selected groups frequently lose an arm under resampling.
+    data = pd.DataFrame(
+        {
+            "uplift_score": [0.99, 0.90, 0.70, 0.65, 0.30, 0.10],
+            "treatment": [1, 0, 1, 0, 1, 0],
+            "conversion": [1, 0, 0, 0, 1, 0],
+        }
+    )
+    result = bootstrap_policy_value(
+        data,
+        fraction=0.5,
+        n_boot=200,
+        random_state=5,
+        cost_per_contact=0.5,
+        value_per_conversion=10.0,
+    )
+
+    assert 2 <= result["n_valid_boot"] < result["n_boot"]
+    assert result["n_valid_boot"] + result["n_invalid_boot"] == result["n_boot"]
+    for metric in (
+        "uplift_mean",
+        "uplift_ci_low",
+        "uplift_ci_high",
+        "profit_mean",
+        "profit_ci_low",
+        "profit_ci_high",
+    ):
+        assert np.isfinite(result[metric])
+    # Each bootstrap sample contacts three customers at this fraction.
+    assert result["profit_mean"] == pytest.approx(result["uplift_mean"] * 3 * 10.0 - 1.5)
+
+
+@pytest.mark.parametrize(
+    ("cost_per_contact", "value_per_conversion"),
+    [(0.5, None), (None, 10.0)],
+)
+def test_bootstrap_policy_value_requires_complete_economics(
+    synthetic_data: pd.DataFrame,
+    cost_per_contact: float | None,
+    value_per_conversion: float | None,
+) -> None:
+    data = synthetic_data.assign(uplift_score=synthetic_data["discount_affinity"])
+
+    with pytest.raises(ValueError, match="must be provided together"):
+        bootstrap_policy_value(
+            data,
+            cost_per_contact=cost_per_contact,
+            value_per_conversion=value_per_conversion,
+            n_boot=10,
+        )
+
+
+@pytest.mark.parametrize(
+    ("cost_per_contact", "value_per_conversion", "message"),
+    [
+        (-1.0, 10.0, "cost_per_contact"),
+        (np.inf, 10.0, "cost_per_contact"),
+        (0.5, 0.0, "value_per_conversion"),
+        (0.5, np.nan, "value_per_conversion"),
+    ],
+)
+def test_bootstrap_policy_value_rejects_invalid_economics(
+    synthetic_data: pd.DataFrame,
+    cost_per_contact: float,
+    value_per_conversion: float,
+    message: str,
+) -> None:
+    data = synthetic_data.assign(uplift_score=synthetic_data["discount_affinity"])
+
+    with pytest.raises(ValueError, match=message):
+        bootstrap_policy_value(
+            data,
+            cost_per_contact=cost_per_contact,
+            value_per_conversion=value_per_conversion,
+            n_boot=10,
+        )
+
+
+def test_bootstrap_policy_value_rejects_unidentified_top_segment() -> None:
+    # The overall experiment has both arms, but only treated users are in top-k.
+    data = pd.DataFrame(
+        {
+            "uplift_score": [0.9, 0.8, 0.7, 0.6],
+            "treatment": [1, 1, 0, 0],
+            "conversion": [1, 0, 1, 0],
+        }
+    )
+
+    with pytest.raises(ValueError, match="requires both treatment arms"):
+        bootstrap_policy_value(data, fraction=0.5, n_boot=20)
+
+
+def test_bootstrap_policy_value_rejects_insufficient_valid_resamples() -> None:
+    # With two customers, seed 4 produces two single-arm resamples.
+    data = pd.DataFrame(
+        {
+            "uplift_score": [0.9, 0.1],
+            "treatment": [1, 0],
+            "conversion": [1, 0],
+        }
+    )
+
+    with pytest.raises(ValueError, match="fewer than two bootstrap resamples"):
+        bootstrap_policy_value(data, fraction=1.0, n_boot=2, random_state=4)
+
+
+def test_bootstrap_policy_value_rejects_empty_data() -> None:
+    data = pd.DataFrame(columns=["uplift_score", "treatment", "conversion"])
+
+    with pytest.raises(ValueError, match="data must not be empty"):
+        bootstrap_policy_value(data, n_boot=20)

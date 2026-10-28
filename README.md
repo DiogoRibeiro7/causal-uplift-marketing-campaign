@@ -230,6 +230,15 @@ Named misuse risks are enumerated in the generated model card —
 proxy targeting, self-fulfilling prophecies, OOD reuse, treating point
 estimates as ground truth, and score leakage into other systems.
 
+Policy-value bootstrap intervals need treated and control observations inside
+the selected top-k group. The estimator excludes resamples without both arms
+and returns `n_valid_boot` / `n_invalid_boot` so that sparse-selection
+uncertainty is visible. If fewer than two resamples support an estimate, it
+raises an error instead of reporting an undefined interval. Profit intervals
+require both `cost_per_contact` and `value_per_conversion`. A large invalid
+resample count signals weak overlap; do not interpret the remaining percentile
+interval as a well-supported population confidence interval.
+
 ## Layout
 
 ```text
