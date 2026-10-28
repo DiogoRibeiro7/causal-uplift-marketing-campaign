@@ -47,18 +47,44 @@ This project uses [Poetry](https://python-poetry.org/). After cloning:
 
 ```bash
 poetry install
-poetry run pytest                  # 69 tests
-poetry run jupyter lab notebooks/  # walk through NB01..NB09
+poetry run pytest                  # 78 tests
 ```
 
-To use the real Hillstrom dataset, supply Kaggle credentials in a `.env`
-file at the repo root (the loader falls back to the synthetic generator
-when credentials are missing — every notebook still runs end to end):
+To explore the notebooks, install the optional JupyterLab group:
+
+```bash
+poetry install --with notebooks
+poetry run jupyter lab notebooks/  # NB01..NB09
+```
+
+To use the real Hillstrom dataset, install the optional Kaggle integration
+and supply credentials in a `.env` file at the repo root. The loader falls
+back to synthetic data without credentials, so the notebooks can still run:
+
+```bash
+poetry install -E kaggle
+```
+
+Then configure your credentials:
 
 ```dotenv
 KAGGLE_USERNAME=your-username
 KAGGLE_KEY=your-key
 ```
+
+Optional XGBoost and LightGBM comparison models are available through
+`poetry install -E boosters`.
+
+### Build distributions
+
+Build the source archive and wheel locally:
+
+```bash
+poetry build
+```
+
+This creates both artifacts under `dist/`. CI verifies that they build;
+publishing to PyPI is a separate release action.
 
 ### Programmatic use
 
@@ -212,7 +238,7 @@ estimates as ground truth, and score leakage into other systems.
 ├── reports/               # generated artifacts (gitignored except a tracked report stub)
 ├── scripts/               # CLI entry points
 ├── src/uplift_marketing/  # the package
-├── tests/                 # pytest suite (69 tests)
+├── tests/                 # pytest suite (78 tests)
 ├── pyproject.toml
 ├── ROADMAP.md             # versioned feature ledger
 └── README.md
