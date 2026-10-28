@@ -27,3 +27,5 @@ jobs:
         run: poetry run mypy src
       - name: Test
         run: poetry run pytest -q
+      - name: Build distributions
+        run: poetry build

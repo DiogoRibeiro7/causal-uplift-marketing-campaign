@@ -35,4 +35,4 @@ __all__ = [
     "write_policy_report",
 ]
 
-__version__ = "0.1.0"
+__version__ = "0.6.0"
