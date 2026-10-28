@@ -85,8 +85,8 @@ def export_dashboard(
       supplied economics; exactly those rows carry
       ``in_recommendation = 1``, including when scores are tied or the
       no-contact policy wins.
-    - ``profit_curve.csv`` — full predicted-profit sweep over the budget
-      grid.
+    - ``profit_curve.csv`` — compact predicted-profit grid plus the exact
+      optimum when no explicit budget grid is supplied.
     - ``budget_scenarios.csv`` — scenario-table output across multiple
       economics assumptions, when ``economics_scenarios`` is provided.
     - ``model_summary.json`` — single-page summary of headline metrics

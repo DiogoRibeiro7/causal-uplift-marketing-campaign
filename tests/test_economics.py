@@ -32,6 +32,22 @@ def test_campaign_economics_rejects_invalid_inputs() -> None:
         CampaignEconomics(cost_per_contact=0.5, value_per_conversion=0.0)
 
 
+@pytest.mark.parametrize(
+    ("cost", "value", "message"),
+    [
+        (np.nan, 10.0, "cost_per_contact"),
+        (np.inf, 10.0, "cost_per_contact"),
+        (0.5, np.nan, "value_per_conversion"),
+        (0.5, np.inf, "value_per_conversion"),
+    ],
+)
+def test_campaign_economics_rejects_nonfinite_inputs(
+    cost: float, value: float, message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        CampaignEconomics(cost_per_contact=cost, value_per_conversion=value)
+
+
 def _scored_fixture(n: int = 600, seed: int = 0) -> pd.DataFrame:
     rng = np.random.default_rng(seed)
     treatment = rng.binomial(1, 0.5, size=n)
@@ -79,6 +95,94 @@ def test_optimize_budget_can_recommend_no_contacts() -> None:
     assert rec.predicted_net_profit == 0.0
     assert rec.profit_curve.iloc[0]["fraction"] == 0.0
     assert rec.profit_curve.iloc[0]["net_profit"] == 0.0
+
+
+def test_optimize_budget_finds_profitable_prefix_below_default_grid() -> None:
+    # The best policy contacts one customer; the default 2% grid starts at two.
+    scored = pd.DataFrame({"uplift_score": [0.20, *([-0.10] * 99)]})
+    economics = CampaignEconomics(cost_per_contact=0.05, value_per_conversion=1.0)
+
+    recommendation = optimize_budget(scored, economics)
+
+    assert recommendation.n_selected == 1
+    assert recommendation.fraction == pytest.approx(0.01)
+    assert recommendation.predicted_net_profit == pytest.approx(0.15)
+    assert len(recommendation.targets) == 1
+    # The exact optimum must be available to dashboard/plot consumers.
+    assert recommendation.profit_curve["net_profit"].max() == pytest.approx(0.15)
+    assert (recommendation.profit_curve["n_selected"] == 1).any()
+    assert len(recommendation.profit_curve) <= 52  # 50 grid rows + baseline + optimum.
+
+
+def test_explicit_fraction_grid_still_limits_budget_search() -> None:
+    scored = pd.DataFrame({"uplift_score": [0.20, *([-0.10] * 99)]})
+    economics = CampaignEconomics(cost_per_contact=0.05, value_per_conversion=1.0)
+
+    recommendation = optimize_budget(scored, economics, fractions=np.array([0.02, 1.0]))
+
+    assert recommendation.n_selected == 0
+    assert recommendation.predicted_net_profit == 0.0
+
+
+def test_default_budget_optimization_matches_all_prefixes() -> None:
+    scored = pd.DataFrame(
+        {
+            "ranking_score": [0.6, 0.9, 0.8, 0.2, 0.4, 0.7],
+            "uplift_score": [0.12, 0.04, -0.06, 0.10, -0.01, 0.01],
+        }
+    )
+    economics = CampaignEconomics(cost_per_contact=0.10, value_per_conversion=10.0)
+
+    ranked = scored.sort_values("ranking_score", ascending=False, kind="mergesort")
+    prefix_profit = np.cumsum(ranked["uplift_score"]) * 10.0 - np.arange(1, 7) * 0.10
+    expected_n = int(np.argmax(np.r_[0.0, prefix_profit]))
+
+    recommendation = optimize_budget(scored, economics, score_col="ranking_score")
+
+    assert recommendation.n_selected == expected_n
+    assert recommendation.fraction == pytest.approx(expected_n / len(scored))
+    assert recommendation.predicted_net_profit == pytest.approx(
+        float(np.r_[0.0, prefix_profit][expected_n])
+    )
+
+
+def test_default_budget_optimization_breaks_score_ties_by_input_order() -> None:
+    scored = pd.DataFrame(
+        {
+            "ranking_score": [0.5, 0.5, 0.5],
+            "uplift_score": [0.30, -0.20, 0.01],
+        },
+        index=[15, 12, 30],
+    )
+    economics = CampaignEconomics(cost_per_contact=0.05, value_per_conversion=1.0)
+
+    recommendation = optimize_budget(scored, economics, score_col="ranking_score")
+
+    assert recommendation.n_selected == 1
+    assert recommendation.targets.index.tolist() == [15]
+
+
+@pytest.mark.parametrize("invalid", [np.nan, np.inf])
+def test_optimize_budget_rejects_nonfinite_scores(invalid: float) -> None:
+    economics = CampaignEconomics(cost_per_contact=0.05, value_per_conversion=1.0)
+
+    for column in ("ranking_score", "uplift_score"):
+        scored = pd.DataFrame(
+            {"ranking_score": [0.5, 0.4], "uplift_score": [0.3, 0.2]}
+        )
+        scored.loc[0, column] = invalid
+        with pytest.raises(ValueError, match="finite values"):
+            optimize_budget(scored, economics, score_col="ranking_score")
+
+
+def test_scenario_table_uses_exact_default_budget() -> None:
+    scored = pd.DataFrame({"uplift_score": [0.20, *([-0.10] * 99)]})
+    economics = {"baseline": CampaignEconomics(0.05, 1.0)}
+
+    scenario = scenario_table(scored, economics)
+
+    assert scenario.iloc[0]["n_selected"] == 1
+    assert scenario.iloc[0]["optimal_fraction"] == pytest.approx(0.01)
 
 
 def test_scenario_table_includes_no_contact_policy() -> None:
