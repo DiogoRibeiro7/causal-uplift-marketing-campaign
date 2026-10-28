@@ -51,7 +51,12 @@ def make_black_box_classifier(random_state: int = 42) -> ClassifierMixin:
 
 
 def _positive_class_probability(model: BaseEstimator, x: pd.DataFrame) -> NDArray[Any]:
-    """Return positive-class probabilities from a fitted classifier."""
+    """Return ``P(Y=1)`` using a fitted classifier's class-column mapping.
+
+    Scikit-learn orders the columns of ``predict_proba`` according to
+    ``classes_``. A model trained on only negative outcomes exposes one
+    column of ones for class 0; those are *not* positive-class probabilities.
+    """
 
     predict_proba = getattr(model, "predict_proba", None)
     if not callable(predict_proba):
@@ -60,10 +65,25 @@ def _positive_class_probability(model: BaseEstimator, x: pd.DataFrame) -> NDArra
     probabilities = np.asarray(predict_proba(x), dtype=float)
     if probabilities.ndim != 2:
         raise ValueError("predict_proba must return a two-dimensional array")
-    if probabilities.shape[1] == 1:
-        # Degenerate training fold with one class. Return the only probability.
-        return probabilities[:, 0]
-    return probabilities[:, 1]
+    if probabilities.shape[0] != len(x):
+        raise ValueError("predict_proba must return one probability row per sample")
+
+    raw_classes = getattr(model, "classes_", None)
+    if raw_classes is None:
+        raise ValueError("Fitted classifier must expose classes_ to identify P(Y=1)")
+    classes = np.asarray(raw_classes)
+    if classes.ndim != 1 or len(classes) != probabilities.shape[1]:
+        raise ValueError("classes_ must match the probability columns")
+    if not 1 <= len(classes) <= 2 or set(classes.tolist()) - {0, 1}:
+        raise ValueError("Classifier classes_ must contain binary outcome labels 0/1")
+    if len(set(classes.tolist())) != len(classes):
+        raise ValueError("Classifier classes_ must contain unique labels")
+
+    positive_columns = np.flatnonzero(classes == 1)
+    if len(positive_columns) == 0:
+        # A single-class negative training fold has P(Y=1) = 0 everywhere.
+        return np.zeros(len(x), dtype=float)
+    return np.asarray(probabilities[:, int(positive_columns[0])], dtype=float)
 
 
 @dataclass

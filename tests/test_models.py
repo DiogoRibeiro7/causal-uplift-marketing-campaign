@@ -1,16 +1,25 @@
 from __future__ import annotations
 
 import numpy as np
+import pandas as pd
 import pytest
+from numpy.typing import NDArray
+from sklearn.base import BaseEstimator
 from sklearn.calibration import CalibratedClassifierCV
+from sklearn.dummy import DummyClassifier
 from sklearn.model_selection import train_test_split
 
-from uplift_marketing.features import infer_feature_spec, split_features_treatment_outcome
+from uplift_marketing.features import (
+    FeatureSpec,
+    infer_feature_spec,
+    split_features_treatment_outcome,
+)
 from uplift_marketing.models import (
     DRLearner,
     SLearner,
     TLearner,
     XLearner,
+    _positive_class_probability,
     cross_fit_uplift_oof,
     make_calibrated_classifier,
 )
@@ -104,3 +113,84 @@ def test_dr_learner_rejects_invalid_propensity_clip() -> None:
     spec = FeatureSpec(numerical=["x"], categorical=[], excluded=[])
     with pytest.raises(ValueError, match="propensity_clip"):
         DRLearner(spec=spec, propensity_clip=(0.5, 0.4))
+
+
+def _constant_outcome_by_arm() -> tuple[pd.DataFrame, NDArray[np.int64], NDArray[np.int64]]:
+    """Create balanced treatment groups with one outcome class per arm."""
+    x = pd.DataFrame({"signal": np.linspace(-1.0, 1.0, 24)})
+    treatment = (np.arange(len(x)) % 2).astype(np.int64)
+    outcome = treatment.copy()  # All controls fail; all treated users convert.
+    return x, treatment, outcome
+
+
+def test_s_learner_respects_single_negative_outcome_class() -> None:
+    x, treatment, _ = _constant_outcome_by_arm()
+    y = np.zeros(len(x), dtype=np.int64)
+    spec = FeatureSpec(numerical=["signal"], categorical=[], excluded=[])
+
+    model = SLearner(spec=spec, base_model=DummyClassifier()).fit(x, treatment, y)
+    p_control, p_treated = model.predict_potential_outcomes(x)
+
+    # A one-column class-0 probability must represent P(Y=1)=0, not 1.
+    assert np.allclose(p_control, 0.0)
+    assert np.allclose(p_treated, 0.0)
+
+
+def test_t_learner_handles_single_class_per_treatment_arm() -> None:
+    x, treatment, y = _constant_outcome_by_arm()
+    spec = FeatureSpec(numerical=["signal"], categorical=[], excluded=[])
+
+    model = TLearner(spec=spec, base_model=DummyClassifier()).fit(x, treatment, y)
+    p_control, p_treated = model.predict_potential_outcomes(x)
+
+    assert np.allclose(p_control, 0.0)
+    assert np.allclose(p_treated, 1.0)
+    assert np.allclose(model.predict_uplift(x), 1.0)
+
+
+def test_x_learner_handles_single_class_per_treatment_arm() -> None:
+    x, treatment, y = _constant_outcome_by_arm()
+    spec = FeatureSpec(numerical=["signal"], categorical=[], excluded=[])
+
+    model = XLearner(spec=spec, base_model=DummyClassifier()).fit(x, treatment, y)
+    p_control, p_treated = model.predict_potential_outcomes(x)
+
+    assert np.allclose(p_control, 0.0)
+    assert np.allclose(p_treated, 1.0)
+    assert np.allclose(model.predict_uplift(x), 1.0)
+
+
+def test_dr_learner_pseudo_outcomes_handle_single_class_arms() -> None:
+    x, treatment, y = _constant_outcome_by_arm()
+    spec = FeatureSpec(numerical=["signal"], categorical=[], excluded=[])
+
+    model = DRLearner(
+        spec=spec,
+        base_model=DummyClassifier(),
+        propensity_model=DummyClassifier(),
+        n_splits=3,
+        random_state=1,
+    ).fit(x, treatment, y)
+
+    assert model.cross_fit_pseudo_outcomes_ is not None
+    # Both arm-specific outcomes are deterministic; AIPW's residuals are zero.
+    assert np.allclose(model.cross_fit_pseudo_outcomes_, 1.0)
+    assert np.allclose(model.predict_uplift(x), 1.0)
+
+
+class _ReversedBinaryClassifier(BaseEstimator):
+    """Minimal fitted classifier whose positive class is the first column."""
+
+    classes_: NDArray[np.int64] = np.array([1, 0], dtype=np.int64)
+
+    def predict_proba(self, x: pd.DataFrame) -> NDArray[np.float64]:
+        """Return class-ordered probabilities for each sample."""
+        return np.tile(np.array([0.8, 0.2]), (len(x), 1))
+
+
+def test_positive_probability_respects_class_column_order() -> None:
+    x = pd.DataFrame({"signal": [0.0, 1.0]})
+
+    positive_probability = _positive_class_probability(_ReversedBinaryClassifier(), x)
+
+    assert np.allclose(positive_probability, 0.8)
