@@ -37,10 +37,10 @@ class CampaignEconomics:
     currency: str = "EUR"
 
     def __post_init__(self) -> None:
-        if self.cost_per_contact < 0:
-            raise ValueError("cost_per_contact must be non-negative")
-        if self.value_per_conversion <= 0:
-            raise ValueError("value_per_conversion must be positive")
+        if not np.isfinite(self.cost_per_contact) or self.cost_per_contact < 0:
+            raise ValueError("cost_per_contact must be finite and non-negative")
+        if not np.isfinite(self.value_per_conversion) or self.value_per_conversion <= 0:
+            raise ValueError("value_per_conversion must be finite and positive")
 
     @property
     def break_even_uplift(self) -> float:
@@ -102,29 +102,26 @@ class BudgetRecommendation:
     profit_curve: pd.DataFrame
 
 
-def _expected_profit_at_fraction(
-    scored: pd.DataFrame,
-    score_col: str,
-    uplift_col: str,
+def _expected_profit_at_count(
+    sorted_scores: NDArray[Any],
+    cumulative_uplift: NDArray[Any],
+    n_selected: int,
     fraction: float,
     economics: CampaignEconomics,
 ) -> dict[str, float]:
-    """Inner helper: predicted profit for the top-``fraction`` selection."""
+    """Summarise one contact count using already-sorted cumulative uplift."""
 
-    n_total = len(scored)
-    n_sel = min(n_total, max(1, int(np.ceil(n_total * fraction)))) if fraction > 0 else 0
-    selected = scored.sort_values(score_col, ascending=False).head(n_sel)
-    predicted_inc = float(selected[uplift_col].sum())
+    predicted_inc = float(cumulative_uplift[n_selected - 1]) if n_selected else 0.0
     revenue = predicted_inc * economics.value_per_conversion
-    cost = n_sel * economics.cost_per_contact
+    cost = n_selected * economics.cost_per_contact
     return {
         "fraction": fraction,
-        "n_selected": int(n_sel),
+        "n_selected": n_selected,
         "predicted_incremental_conversions": predicted_inc,
         "revenue": revenue,
         "cost": cost,
         "net_profit": revenue - cost,
-        "threshold_score": float(selected[score_col].iloc[-1]) if n_sel else float("nan"),
+        "threshold_score": float(sorted_scores[n_selected - 1]) if n_selected else float("nan"),
     }
 
 
@@ -138,10 +135,13 @@ def optimize_budget(
 ) -> BudgetRecommendation:
     """Pick the top-fraction that maximises predicted net profit.
 
-    Sweeps the requested grid of contact fractions plus the no-contact
-    baseline (zero profit), then returns the highest-profit policy and its
-    customer list. A no-contact recommendation has an empty ``targets``
-    DataFrame and ``threshold_score=None``.
+    By default, evaluates every possible top-k contact count using cumulative
+    uplift and returns the global maximum, including the no-contact baseline.
+    The ``profit_curve`` retains the compact plotting grid plus the exact
+    optimum, so dashboard exports remain small. Providing ``fractions``
+    explicitly limits the search to that grid and zero contacts. A no-contact
+    recommendation has an empty ``targets`` DataFrame and
+    ``threshold_score=None``.
 
     Parameters
     ----------
@@ -161,15 +161,17 @@ def optimize_budget(
         incremental conversions. Defaults to ``uplift_score``.
     fractions:
         Optional non-empty grid of contact fractions in ``(0, 1]``.
-        Defaults to ``np.linspace(0.02, 1.0, 50)``. The zero-contact
-        baseline is always included automatically.
+        If omitted, all top-k counts are eligible and a 50-point summary
+        grid is used only for plotting. If provided, only the specified
+        fractions are eligible. The zero-contact baseline is always included.
     """
 
     missing = [c for c in (score_col, uplift_col) if c not in scored.columns]
     if missing:
         raise ValueError(f"Missing columns: {missing}")
 
-    if fractions is None:
+    exact_search = fractions is None
+    if exact_search:
         fractions = np.round(np.linspace(0.02, 1.0, 50), 4)
     fractions = np.asarray(fractions, dtype=float)
     if (
@@ -180,15 +182,50 @@ def optimize_budget(
     ):
         raise ValueError("fractions must be a non-empty 1D grid in (0, 1]")
 
-    rows = [_expected_profit_at_fraction(scored, score_col, uplift_col, 0.0, economics)]
-    rows += [
-        _expected_profit_at_fraction(scored, score_col, uplift_col, float(f), economics)
-        for f in fractions
-    ]
+    # A stable sort keeps ties deterministic; one cumulative sum avoids
+    # re-sorting and re-summing the customer base at each candidate budget.
+    ranked = scored.sort_values(score_col, ascending=False, kind="mergesort")
+    sorted_scores = ranked[score_col].to_numpy(dtype=float)
+    sorted_uplift = ranked[uplift_col].to_numpy(dtype=float)
+    if not np.isfinite(sorted_scores).all() or not np.isfinite(sorted_uplift).all():
+        raise ValueError("score and uplift columns must contain only finite values")
+
+    n_total = len(ranked)
+    cumulative_uplift = np.cumsum(sorted_uplift)
+    rows = [_expected_profit_at_count(sorted_scores, cumulative_uplift, 0, 0.0, economics)]
+    for fraction in fractions:
+        n_selected = min(n_total, max(1, int(np.ceil(n_total * fraction))))
+        rows.append(
+            _expected_profit_at_count(
+                sorted_scores, cumulative_uplift, n_selected, float(fraction), economics
+            )
+        )
+
+    best = max(rows, key=lambda row: row["net_profit"])
+    if exact_search and n_total:
+        # This global optimum need not lie on the 50-point plotting grid.
+        cumulative_profit = (
+            cumulative_uplift * economics.value_per_conversion
+            - np.arange(1, n_total + 1) * economics.cost_per_contact
+        )
+        exact_count = int(np.argmax(np.r_[0.0, cumulative_profit]))
+        best = _expected_profit_at_count(
+            sorted_scores,
+            cumulative_uplift,
+            exact_count,
+            exact_count / n_total,
+            economics,
+        )
+        if exact_count > 0 and not any(
+            row["n_selected"] == exact_count and row["fraction"] == best["fraction"]
+            for row in rows
+        ):
+            rows.append(best)
+            rows.sort(key=lambda row: row["fraction"])
+
     profit_curve = pd.DataFrame(rows)
-    best = profit_curve.loc[profit_curve["net_profit"].idxmax()]
     n_selected = int(best["n_selected"])
-    targets = scored.sort_values(score_col, ascending=False).head(n_selected).copy()
+    targets = ranked.head(n_selected).copy()
     return BudgetRecommendation(
         fraction=float(best["fraction"]),
         n_selected=n_selected,
@@ -225,7 +262,8 @@ def scenario_table(
     uplift_col:
         Column summed to produce predicted incremental conversions.
     fractions:
-        Grid of positive contact fractions; zero contacts are always evaluated.
+        Optional grid restricting eligible budgets. Without a grid, every
+        possible top-k prefix is eligible; zero contacts are always evaluated.
 
     Returns
     -------

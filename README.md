@@ -30,9 +30,11 @@ a synthetic generator when the real data is unavailable.
   Qini, bootstrap CIs on policy value, decile stability, subgroup-level
   uplift with CIs.
 - **Profit-optimal targeting** — `CampaignEconomics`, `optimize_budget`
-  (returns the cut-off score, customer list, and predicted economics;
+  (searches every possible top-k size by default, returning the cut-off
+  score, customer list, and predicted economics;
   recommends no contacts when no evaluated campaign offers positive profit),
-  `scenario_table` (sweeps cost / value scenarios).
+  `scenario_table` (sweeps cost / value scenarios). Pass `fractions` to restrict
+  eligible budgets to a supplied grid.
 - **Stakeholder hand-off** — `export_dashboard` writes a self-contained
   `reports/dashboard/` directory: BI-ready CSVs, a model card focused
   on causal assumptions and misuse risks, a campaign policy report
@@ -191,7 +193,7 @@ needs under `reports/dashboard/`:
 ```text
 reports/dashboard/
 ├── recommended_targets.csv     # every customer, score, segment, in_recommendation flag
-├── profit_curve.csv            # full predicted-profit sweep over the budget grid
+├── profit_curve.csv            # compact budget grid plus the exact optimum
 ├── budget_scenarios.csv        # scenario × policy sensitivity sweep
 ├── model_summary.json          # AUQ / AUUC / normalized Qini / recommendation
 ├── model_card.md               # causal assumptions + misuse risks (due diligence)

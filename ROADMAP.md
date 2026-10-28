@@ -32,7 +32,7 @@
 
 ## v0.5 — Campaign simulation
 
-- [x] Add campaign budget optimizer (`optimize_budget` in `uplift_marketing.economics`; sweeps the predicted-profit curve and returns a `BudgetRecommendation` with the optimal fraction, cut-off score, and selected customer list).
+- [x] Add campaign budget optimizer (`optimize_budget` in `uplift_marketing.economics`; evaluates every contact count via cumulative profit by default and returns a `BudgetRecommendation` with the optimal fraction, cut-off score, and selected customer list; a supplied fraction grid restricts candidates).
 - [x] Add cost-per-contact and conversion-value assumptions (`CampaignEconomics` value object with `break_even_uplift` and `net_profit`; surfaced through `UpliftDataset.economics`).
 - [x] Add scenario analysis for contact budgets (`scenario_table` sweeps policy × economics combinations; NB06 §9 plots sensitivity to halved value / doubled contact cost).
 - [x] Add dashboard-ready output tables (`export_dashboard` writes `recommended_targets.csv`, `profit_curve.csv`, `budget_scenarios.csv`, `model_summary.json` under `reports/dashboard/`; wired into `run_pipeline` and NB06 §10).
