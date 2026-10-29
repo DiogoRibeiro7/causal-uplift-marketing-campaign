@@ -379,6 +379,38 @@ def test_export_dashboard_preserves_exact_targets_when_ranking_scores_tie(
     assert "ranking_score" in targets.columns
 
 
+def test_export_dashboard_uses_numeric_order_for_string_ranking_scores(tmp_path: Path) -> None:
+    """The CRM export must flag exactly the customers chosen by optimize_budget."""
+    scored = pd.DataFrame(
+        {
+            "customer_id": [1, 2, 3, 4],
+            "ranking_score": ["9", "10", "8", "7"],
+            "uplift_score": [0.2, 0.5, -0.3, -0.4],
+            "treatment": [0, 1, 0, 1],
+            "conversion": [0, 1, 0, 1],
+        }
+    )
+    economics = CampaignEconomics(cost_per_contact=0.3, value_per_conversion=1.0)
+    recommendation = optimize_budget(scored, economics, score_col="ranking_score")
+
+    paths = export_dashboard(
+        scored,
+        economics=economics,
+        output_dir=tmp_path,
+        score_col="ranking_score",
+        write_figures=False,
+        write_model_card_md=False,
+        write_policy_report_md=False,
+    )
+
+    targets = pd.read_csv(paths["recommended_targets"])
+    selected_ids = targets.loc[targets["in_recommendation"] == 1, "customer_id"].tolist()
+    assert recommendation.n_selected == 1
+    assert recommendation.targets["customer_id"].tolist() == [2]
+    assert selected_ids == recommendation.targets["customer_id"].tolist()
+    assert targets["customer_id"].tolist() == [2, 1, 3, 4]
+
+
 def test_export_dashboard_honors_custom_schema_and_ranking_column(tmp_path: Path) -> None:
     """Configured column names must flow into the summary and CRM export."""
     scored = _scored_fixture(n=80, seed=7).rename(
