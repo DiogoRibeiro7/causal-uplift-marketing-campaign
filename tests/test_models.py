@@ -307,3 +307,63 @@ def test_cross_fit_accepts_boolean_labels() -> None:
     )
     assert uplift.shape == (len(x),)
     assert np.isfinite(uplift).all()
+
+
+class _FixedProbabilityClassifier(BaseEstimator):
+    """Minimal classifier with explicitly controlled probability columns."""
+
+    classes_: NDArray[np.int64] = np.array([0, 1], dtype=np.int64)
+
+    def __init__(self, probabilities: NDArray[np.float64]) -> None:
+        self.probabilities = probabilities
+
+    def predict_proba(self, x: pd.DataFrame) -> NDArray[np.float64]:
+        """Repeat the specified two-column probability row for each customer."""
+        return np.tile(self.probabilities, (len(x), 1))
+
+
+@pytest.mark.parametrize(
+    ("probabilities", "message"),
+    [
+        (np.array([np.nan, 1.0]), "finite"),
+        (np.array([0.0, np.inf]), "finite"),
+        (np.array([-0.1, 1.1]), r"\[0, 1\]"),
+        (np.array([0.6, 0.6]), "sum to one"),
+        (np.array([0.0, 0.0]), "sum to one"),
+    ],
+)
+def test_positive_class_probability_rejects_invalid_distributions(
+    probabilities: NDArray[np.float64], message: str
+) -> None:
+    """Invalid nuisance probabilities must not enter treatment-effect estimates."""
+    x = pd.DataFrame({"signal": [0.0, 1.0]})
+    with pytest.raises(ValueError, match=message):
+        _positive_class_probability(_FixedProbabilityClassifier(probabilities), x)
+
+
+def test_positive_class_probability_accepts_normalized_distribution() -> None:
+    x = pd.DataFrame({"signal": [0.0, 1.0]})
+    predicted = _positive_class_probability(
+        _FixedProbabilityClassifier(np.array([0.4, 0.6])), x
+    )
+    np.testing.assert_allclose(predicted, [0.6, 0.6])
+
+
+@pytest.mark.parametrize("invalid", [np.nan, np.inf, -0.1, 1.1])
+@pytest.mark.parametrize("as_vector", [False, True])
+def test_x_learner_rejects_invalid_propensity_weights(
+    invalid: float, as_vector: bool
+) -> None:
+    """A missing or impossible propensity cannot be used as a blending weight."""
+    x, treatment, outcome = _constant_outcome_by_arm()
+    spec = FeatureSpec(numerical=["signal"], categorical=[], excluded=[])
+    model = XLearner(spec=spec, base_model=DummyClassifier()).fit(x, treatment, outcome)
+    propensity: float | NDArray[np.float64]
+    if as_vector:
+        propensity = np.full(len(x), 0.5)
+        propensity[0] = invalid
+    else:
+        propensity = invalid
+
+    with pytest.raises(ValueError, match=r"propensity.*finite|propensity.*\[0, 1\]"):
+        model.predict_uplift(x, propensity=propensity)
