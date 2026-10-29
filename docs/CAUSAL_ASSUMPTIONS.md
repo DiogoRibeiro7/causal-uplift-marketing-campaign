@@ -84,6 +84,14 @@ one-dimensional, row-aligned inputs and prevents the uplift column from
 overwriting either probability column. A negative treated-minus-control
 effect is valid and is preserved as negative uplift.
 
+Out-of-fold predictions from `cross_fit_uplift_oof` and the second-stage
+effects returned by the X- and DR-learners must likewise contain exactly one
+real, finite score per customer. Scalar, multi-column, shortened, complex,
+or non-finite predictions are rejected before they can contaminate policy
+metrics or customer rankings. Unlike classifier probabilities, unconstrained
+effect-regression estimates are not clipped to [-1, 1]; extrapolated scores
+should be investigated and calibrated before operational use.
+
 ## No leakage
 
 Features must be measured before campaign exposure. Variables created after treatment can leak outcome information or treatment effects.
