@@ -120,19 +120,36 @@ def validate_randomization(
        its own SMD. Conventionally ``|SMD| > 0.10`` flags imbalance.
     3. **Missingness.** Share of nulls per column, since downstream feature
        inference assumes complete cases by default.
+
+    Treatment assignment must be fully observed, binary, and contain both
+    arms. Otherwise the sample-ratio test or balance comparisons would be
+    misleading. Datasets without covariates still receive an SRM test and
+    return empty balance tables with the usual schema.
     """
 
     if treatment_col not in data:
         raise ValueError(f"Treatment column not found: {treatment_col}")
+    if data.empty:
+        raise ValueError("data must not be empty")
     if not 0 < expected_treated_share < 1:
         raise ValueError("expected_treated_share must be in (0, 1)")
+    if not np.isfinite(smd_threshold) or smd_threshold < 0:
+        raise ValueError("smd_threshold must be finite and non-negative")
 
     treatment = data[treatment_col]
-    if set(treatment.dropna().unique()) - {0, 1}:
+    if treatment.isna().any():
+        raise ValueError(
+            f"Treatment column {treatment_col!r} contains missing treatment assignments"
+        )
+
+    observed_arms = set(treatment.unique())
+    if observed_arms - {0, 1}:
         raise ValueError(
             f"Treatment column {treatment_col!r} must be binary 0/1; "
-            f"found values {sorted(treatment.dropna().unique())}"
+            f"found values {sorted(repr(value) for value in observed_arms)}"
         )
+    if observed_arms != {0, 1}:
+        raise ValueError("Both treatment arms 0 and 1 must be present")
 
     n_total = len(data)
     n_treated = int(treatment.sum())
@@ -182,7 +199,15 @@ def validate_randomization(
                 "smd": smd,
             }
         )
-    balance = pd.DataFrame(rows).sort_values(
+    balance_columns = [
+        "feature",
+        "mean_treated",
+        "mean_control",
+        "std_treated",
+        "std_control",
+        "smd",
+    ]
+    balance = pd.DataFrame(rows, columns=balance_columns).sort_values(
         "smd", key=lambda series: series.abs(), ascending=False
     )
     imbalanced = balance[balance["smd"].abs() > smd_threshold].copy()
