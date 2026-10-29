@@ -59,6 +59,10 @@ in its training and test partitions. When treatment-outcome cells are too rare
 to preserve joint stratification, it emits a warning and stratifies on
 treatment alone; conversion balance within each arm is then not guaranteed.
 If even the treatment-arm balance is impossible, the split raises an error.
+The end-to-end `run_pipeline` uses this same helper, so rare conversion
+strata produce an explicit fallback warning instead of a scikit-learn
+stratification error. Model fitting still requires enough outcome variation
+for the chosen classifier.
 
 S-, T-, X-, and doubly robust learners also validate the original treatment
 and binary conversion labels when fitted directly. Models require both arms,
