@@ -9,7 +9,6 @@ from typing import TypedDict
 import joblib
 import numpy as np
 import pandas as pd
-from sklearn.model_selection import train_test_split
 
 from uplift_marketing.config import DEFAULT_CONFIG, ProjectConfig
 from uplift_marketing.data import load_csv, prepare_uplift_frame, save_csv
@@ -26,7 +25,11 @@ from uplift_marketing.evaluation import (
     qini_curve,
     uplift_curve,
 )
-from uplift_marketing.features import infer_feature_spec, split_features_treatment_outcome
+from uplift_marketing.features import (
+    honest_train_test_split,
+    infer_feature_spec,
+    split_features_treatment_outcome,
+)
 from uplift_marketing.model_card import build_model_card, write_model_card
 from uplift_marketing.models import SLearner, TLearner
 from uplift_marketing.plots import export_campaign_figures
@@ -320,6 +323,10 @@ def run_pipeline(
         the campaign owner's numbers before treating the recommendation as
         production-ready.
 
+    The evaluation split stratifies jointly by treatment and outcome when
+    possible. Rare treatment-outcome strata trigger a warning and a fallback
+    to treatment-only stratification while retaining both experiment arms.
+
     Returns
     -------
     dict[str, Path | float]
@@ -357,15 +364,20 @@ def run_pipeline(
         outcome_test,
         raw_train,
         raw_test,
-    ) = train_test_split(
+    ) = honest_train_test_split(
         x,
         treatment,
         outcome,
         data,
+        treatment=treatment,
+        outcome=outcome,
         test_size=0.30,
         random_state=config.random_state,
-        stratify=treatment.astype(str) + "_" + outcome.astype(str),
     )
+    # The generic split helper preserves the input types, but its return
+    # annotation covers arrays and Series as well as DataFrames.
+    if not isinstance(raw_test, pd.DataFrame):
+        raise TypeError("The raw evaluation split must be a DataFrame")
 
     model: SLearner | TLearner
     if model_name == "s_learner":

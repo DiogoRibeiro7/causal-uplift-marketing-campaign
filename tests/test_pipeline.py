@@ -56,3 +56,30 @@ def test_run_pipeline_honors_custom_treatment_and_outcome_names(tmp_path: Path) 
         )
     )
     assert outputs["top_20_observed_uplift"] == pytest.approx(observed_policy["observed_uplift"])
+
+
+def test_run_pipeline_handles_singleton_treatment_outcome_stratum(tmp_path: Path) -> None:
+    """Rare conversions should trigger treatment-only stratification, not abort."""
+    data = generate_synthetic_uplift_data(n_rows=200, random_state=7)
+    control_indices = data.index[data["treatment"] == 0]
+    treated_indices = data.index[data["treatment"] == 1]
+    data["conversion"] = 0
+    # The treated-conversion group has just one row. Joint stratification
+    # rejects it, but the S-learner can still train using the other positives.
+    data.loc[control_indices[:8], "conversion"] = 1
+    data.loc[treated_indices[:1], "conversion"] = 1
+    input_path = tmp_path / "rare_campaign.csv"
+    data.to_csv(input_path, index=False)
+
+    with pytest.warns(UserWarning, match="treatment-only stratification"):
+        outputs = run_pipeline(
+            input_path,
+            config=ProjectConfig(root_dir=tmp_path, random_state=3),
+            model_name="s_learner",
+        )
+
+    scored_path = outputs["scored_path"]
+    assert isinstance(scored_path, Path)
+    scored = pd.read_csv(scored_path)
+    assert len(scored) == 60
+    assert set(scored["treatment"].unique()) == {0, 1}
