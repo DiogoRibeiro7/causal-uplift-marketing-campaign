@@ -21,6 +21,87 @@ def test_attach_uplift_scores_adds_three_columns() -> None:
     assert scored["uplift_score"].iloc[0] == pytest.approx(0.3)
 
 
+def test_attach_uplift_scores_preserves_index_and_allows_negative_uplift() -> None:
+    data = pd.DataFrame({"id": [1, 2]}, index=[19, 7])
+
+    scored = attach_uplift_scores(
+        data,
+        p_control=np.array([0.0, 1.0]),
+        p_treated=np.array([1.0, 0.0]),
+        uplift_col="incremental_probability",
+    )
+
+    assert scored.index.tolist() == [19, 7]
+    np.testing.assert_allclose(scored["incremental_probability"], [1.0, -1.0])
+    assert "incremental_probability" not in data
+
+
+@pytest.mark.parametrize("invalid", [np.nan, np.inf, -np.inf])
+@pytest.mark.parametrize("parameter", ["p_control", "p_treated"])
+def test_attach_uplift_scores_rejects_nonfinite_probabilities(
+    invalid: float, parameter: str
+) -> None:
+    values = {"p_control": np.array([0.1, 0.3]), "p_treated": np.array([0.2, 0.4])}
+    values[parameter][1] = invalid
+
+    with pytest.raises(ValueError, match=f"{parameter}.*finite"):
+        attach_uplift_scores(pd.DataFrame({"id": [1, 2]}), **values)
+
+
+@pytest.mark.parametrize("invalid", [-0.1, 1.1])
+@pytest.mark.parametrize("parameter", ["p_control", "p_treated"])
+def test_attach_uplift_scores_rejects_out_of_range_probabilities(
+    invalid: float, parameter: str
+) -> None:
+    values = {"p_control": np.array([0.1, 0.3]), "p_treated": np.array([0.2, 0.4])}
+    values[parameter][1] = invalid
+
+    with pytest.raises(ValueError, match=rf"{parameter}.*\[0, 1\]"):
+        attach_uplift_scores(pd.DataFrame({"id": [1, 2]}), **values)
+
+
+@pytest.mark.parametrize("parameter", ["p_control", "p_treated"])
+def test_attach_uplift_scores_rejects_nonnumeric_probabilities(parameter: str) -> None:
+    values = {"p_control": np.array([0.1, 0.3]), "p_treated": np.array([0.2, 0.4])}
+    values[parameter] = np.array(["not-a-number", "0.3"])
+
+    with pytest.raises(ValueError, match=f"{parameter}.*numeric"):
+        attach_uplift_scores(pd.DataFrame({"id": [1, 2]}), **values)
+
+
+@pytest.mark.parametrize("bad_vector", [np.array(0.2), np.array([[0.2], [0.4]])])
+@pytest.mark.parametrize("parameter", ["p_control", "p_treated"])
+def test_attach_uplift_scores_requires_one_dimensional_probabilities(
+    bad_vector: np.ndarray, parameter: str
+) -> None:
+    values = {"p_control": np.array([0.1, 0.3]), "p_treated": np.array([0.2, 0.4])}
+    values[parameter] = bad_vector
+
+    with pytest.raises(ValueError, match=f"{parameter}.*one-dimensional"):
+        attach_uplift_scores(pd.DataFrame({"id": [1, 2]}), **values)
+
+
+@pytest.mark.parametrize("parameter", ["p_control", "p_treated"])
+def test_attach_uplift_scores_rejects_mismatched_lengths(parameter: str) -> None:
+    data = pd.DataFrame({"id": [1, 2]})
+    values = {"p_control": np.array([0.1, 0.2]), "p_treated": np.array([0.3, 0.4])}
+    values[parameter] = np.array([0.2])
+
+    with pytest.raises(ValueError, match=f"{parameter}.*same length"):
+        attach_uplift_scores(data, **values)
+
+
+@pytest.mark.parametrize("reserved", ["p_control", "p_treated"])
+def test_attach_uplift_scores_rejects_reserved_uplift_column(reserved: str) -> None:
+    data = pd.DataFrame({"id": [1, 2]})
+
+    with pytest.raises(ValueError, match="uplift_col"):
+        attach_uplift_scores(
+            data, p_control=np.array([0.1, 0.2]), p_treated=np.array([0.3, 0.4]),
+            uplift_col=reserved,
+        )
+
+
 def test_make_uplift_deciles_assigns_one_through_ten() -> None:
     df = pd.DataFrame({"uplift_score": np.arange(1000) / 1000.0})
     deciles = make_uplift_deciles(df)
