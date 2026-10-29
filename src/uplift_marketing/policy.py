@@ -45,6 +45,13 @@ def assign_campaign_segments(
         Maximum treated probability for the lost-cause segment.
     high_probability_threshold:
         Minimum control probability for the sure-thing segment.
+
+    Notes
+    -----
+    A customer is persuadable only with strictly positive predicted uplift.
+    Negative uplift always takes precedence over the other classifications.
+    Invalid probabilities and non-finite predictions are rejected before
+    assigning any campaign action.
     """
 
     required = {uplift_col, p_control_col, p_treated_col}
@@ -56,6 +63,22 @@ def assign_campaign_segments(
     p_control = scored[p_control_col].astype(float)
     p_treated = scored[p_treated_col].astype(float)
 
+    if not (
+        np.isfinite(low_probability_threshold)
+        and np.isfinite(high_probability_threshold)
+        and 0 <= low_probability_threshold <= high_probability_threshold <= 1
+    ):
+        raise ValueError("probability thresholds must satisfy 0 <= low <= high <= 1")
+    if high_uplift_threshold is not None and (
+        not np.isfinite(high_uplift_threshold) or high_uplift_threshold < 0
+    ):
+        raise ValueError("high_uplift_threshold must be finite and non-negative")
+
+    if not all(np.isfinite(values.to_numpy()).all() for values in (uplift, p_control, p_treated)):
+        raise ValueError("uplift scores and predicted probabilities must be finite")
+    if ((p_control < 0) | (p_control > 1) | (p_treated < 0) | (p_treated > 1)).any():
+        raise ValueError("predicted probabilities must be in [0, 1]")
+
     positive_uplift = uplift[uplift > 0]
     if high_uplift_threshold is None:
         high_uplift_threshold = (
@@ -63,10 +86,17 @@ def assign_campaign_segments(
         )
 
     segment = np.full(len(scored), "review", dtype=object)
+    nonnegative = uplift >= 0
+    segment[nonnegative & (p_treated <= low_probability_threshold) & (uplift <= 0.02)] = (
+        "lost_cause"
+    )
+    segment[nonnegative & (p_control >= high_probability_threshold) & (uplift <= 0.02)] = (
+        "sure_thing"
+    )
+    # An implicit threshold of zero does not make zero-uplift users persuadable.
+    segment[(uplift > 0) & (uplift >= high_uplift_threshold)] = "persuadable"
+    # Negative uplift is never overridden by high response probabilities.
     segment[uplift < 0] = "do_not_disturb"
-    segment[(p_treated <= low_probability_threshold) & (uplift <= 0.02)] = "lost_cause"
-    segment[(p_control >= high_probability_threshold) & (uplift <= 0.02)] = "sure_thing"
-    segment[uplift >= high_uplift_threshold] = "persuadable"
 
     return pd.Series(segment, index=scored.index, name="campaign_segment")
 

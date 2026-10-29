@@ -23,3 +23,10 @@ A high-probability customer may be a poor target if they would have converted an
 - **Lost causes** should not receive expensive targeting.
 - **Do-not-disturb** users may be harmed by contact and should be avoided.
 - **Review** users need more evidence or cheaper experimentation.
+
+The segment rules never classify zero or negative estimated uplift as
+"persuadable", even when no positive scores exist and the automatically
+calculated threshold becomes zero. Negative uplift takes priority over
+high baseline conversion probability: these customers remain
+"do-not-disturb". Non-finite scores and probabilities outside the unit
+interval are rejected before generating recommendations.
