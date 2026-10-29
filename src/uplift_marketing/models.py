@@ -41,6 +41,19 @@ def make_base_classifier(random_state: int = 42) -> ClassifierMixin:
     return LogisticRegression(max_iter=1_000, class_weight="balanced", random_state=random_state)
 
 
+def make_propensity_classifier(random_state: int = 42) -> ClassifierMixin:
+    """Estimate actual treatment probabilities without reweighting treatment arms.
+
+    Class-balancing weights can help rare-outcome classifiers, but for a
+    propensity model they change the effective treatment prevalence. Under
+    an imbalanced randomized allocation, a balanced logistic classifier
+    would predict near 0.5 instead of the true assignment probability,
+    invalidating the inverse-propensity factors in the DR pseudo-outcome.
+    """
+
+    return LogisticRegression(max_iter=1_000, random_state=random_state)
+
+
 def make_black_box_classifier(random_state: int = 42) -> ClassifierMixin:
     """Create a stronger non-linear comparison model."""
 
@@ -563,7 +576,7 @@ class DRLearner:
         if self.base_model is None:
             self.base_model = make_base_classifier(self.random_state)
         if self.propensity_model is None:
-            self.propensity_model = make_base_classifier(self.random_state)
+            self.propensity_model = make_propensity_classifier(self.random_state)
         if self.effect_model is None:
             self.effect_model = make_uplift_regressor(self.random_state)
         if self.n_splits < 2:

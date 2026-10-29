@@ -77,6 +77,15 @@ that supplied scalar or row-wise propensity blending weights are finite and
 in [0, 1]. These checks prevent invalid nuisance predictions from propagating
 into uplift scores and doubly robust pseudo-outcomes.
 
+The DR-learner's default propensity classifier uses **unweighted** logistic
+regression. Unlike a rare-conversion outcome model, its target is the actual
+probability of treatment assignment. Applying inverse-class-frequency weights
+to treatment labels would artificially rebalance a campaign with, for example,
+10% treated customers toward an estimated 50% propensity, distorting the
+augmented inverse-propensity correction. The outcome classifier may still use
+class weights independently; callers supplying a custom propensity estimator
+must ensure its probabilities represent the actual assignment mechanism.
+
 The standalone `attach_uplift_scores` function applies the same [0, 1]
 probability-range and finite-value requirements to both supplied potential
 outcome vectors, including predictions from external models. It also requires

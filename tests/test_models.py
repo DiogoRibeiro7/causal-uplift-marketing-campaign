@@ -6,9 +6,9 @@ import numpy as np
 import pandas as pd
 import pytest
 from numpy.typing import NDArray
-from sklearn.base import BaseEstimator, RegressorMixin
+from sklearn.base import BaseEstimator, ClassifierMixin, RegressorMixin
 from sklearn.calibration import CalibratedClassifierCV
-from sklearn.dummy import DummyClassifier
+from sklearn.dummy import DummyClassifier, DummyRegressor
 from sklearn.model_selection import train_test_split
 
 from uplift_marketing.features import (
@@ -115,6 +115,51 @@ def test_dr_learner_rejects_invalid_propensity_clip() -> None:
     spec = FeatureSpec(numerical=["x"], categorical=[], excluded=[])
     with pytest.raises(ValueError, match="propensity_clip"):
         DRLearner(spec=spec, propensity_clip=(0.5, 0.4))
+
+
+class _ZeroOutcomeProbabilityClassifier(ClassifierMixin, BaseEstimator):
+    """Deliberately misspecified outcome nuisance model for DR regression tests."""
+
+    def fit(
+        self, x: NDArray[Any], y: NDArray[Any]
+    ) -> _ZeroOutcomeProbabilityClassifier:
+        """Expose both binary outcome classes regardless of training labels."""
+        self.classes_ = np.array([0, 1], dtype=np.int64)
+        return self
+
+    def predict_proba(self, x: NDArray[Any]) -> NDArray[np.float64]:
+        """Incorrectly predict that conversion is impossible for every customer."""
+        return np.tile(np.array([1.0, 0.0]), (len(x), 1))
+
+
+@pytest.mark.parametrize("n_treated", [10, 30, 50, 70, 90])
+def test_dr_learner_propensity_preserves_unbalanced_randomization(n_treated: int) -> None:
+    """DR correction must recover the effect when outcome nuisances are wrong.
+
+    Different proportions of customers are randomized to treatment. Their
+    observed outcome is exactly the treatment indicator, so the effect is
+    always 1.0. With intentionally incorrect zero-valued outcome models,
+    identification depends entirely on an unweighted propensity near the
+    actual treatment share. Class-balanced logistic regression instead
+    predicts about 50%, biasing all imbalanced scenarios.
+    """
+    n_control = 100 - n_treated
+    x = pd.DataFrame({"signal": np.zeros(n_control + n_treated)})
+    treatment = np.r_[np.zeros(n_control, dtype=int), np.ones(n_treated, dtype=int)]
+    outcome = treatment.copy()
+    spec = FeatureSpec(numerical=["signal"], categorical=[], excluded=[])
+
+    learner = DRLearner(
+        spec=spec,
+        base_model=_ZeroOutcomeProbabilityClassifier(),
+        effect_model=DummyRegressor(strategy="mean"),
+        n_splits=5,
+        random_state=17,
+    ).fit(x, treatment, outcome)
+
+    assert learner.cross_fit_pseudo_outcomes_ is not None
+    assert np.mean(learner.cross_fit_pseudo_outcomes_) == pytest.approx(1.0, abs=0.02)
+    np.testing.assert_allclose(learner.predict_uplift(x), 1.0, atol=0.02)
 
 
 def _constant_outcome_by_arm() -> tuple[pd.DataFrame, NDArray[np.int64], NDArray[np.int64]]:
