@@ -201,7 +201,9 @@ def load_hillstrom(
     pandas.DataFrame
         A frame with `customer_id`, the eight Hillstrom features, a binary
         `treatment` column, and a binary `conversion` column. Other outcomes
-        are dropped to keep feature inference clean.
+        are dropped to keep feature inference clean. Unknown or missing
+        treatment labels and non-binary selected outcomes are rejected before
+        any integer conversion.
     """
 
     if treated_arm not in HILLSTROM_TREATMENT_LABELS:
@@ -227,6 +229,16 @@ def load_hillstrom(
             f"Found columns: {list(raw.columns)}"
         )
 
+    segments = raw["segment"]
+    if segments.isna().any():
+        raise ValueError("Hillstrom segment contains missing treatment assignments")
+    valid_segments = {"No E-Mail", *HILLSTROM_TREATMENT_LABELS["any"]}
+    unexpected_segments = sorted(set(segments.unique()) - valid_segments)
+    if unexpected_segments:
+        raise ValueError(
+            f"Hillstrom segment contains unknown treatment labels: {unexpected_segments}"
+        )
+
     treated_labels = HILLSTROM_TREATMENT_LABELS[treated_arm]
     if treated_arm == "any":
         kept = raw
@@ -235,13 +247,24 @@ def load_hillstrom(
 
     kept = kept.reset_index(drop=True)
     treatment = kept["segment"].isin(treated_labels).astype(int)
+    if set(treatment.unique()) != {0, 1}:
+        raise ValueError("Both treatment arms 0 and 1 must be present after Hillstrom filtering")
+
+    try:
+        observed_outcome = kept[outcome].to_numpy(dtype=float)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError(f"Hillstrom outcome {outcome!r} must be binary 0/1") from exc
+    if not np.isfinite(observed_outcome).all() or not np.isin(
+        observed_outcome, (0.0, 1.0)
+    ).all():
+        raise ValueError(f"Hillstrom outcome {outcome!r} must be binary 0/1")
 
     adapted = pd.DataFrame(
         {
             "customer_id": np.arange(1, len(kept) + 1, dtype=int),
             **{column: kept[column] for column in HILLSTROM_FEATURE_COLUMNS},
             "treatment": treatment,
-            "conversion": kept[outcome].astype(int),
+            "conversion": observed_outcome.astype(int),
         }
     )
     return adapted
