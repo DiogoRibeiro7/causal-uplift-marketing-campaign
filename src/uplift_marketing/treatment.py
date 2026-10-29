@@ -8,10 +8,30 @@ import numpy as np
 import pandas as pd
 
 
+def _validate_treatment_assignments(
+    treatment: pd.Series, *, treatment_col: str, require_both_arms: bool
+) -> None:
+    """Reject missing or non-binary assignments before computing arm statistics."""
+
+    if treatment.isna().any():
+        raise ValueError(
+            f"Treatment column {treatment_col!r} contains missing treatment assignments"
+        )
+
+    observed_arms = set(treatment.unique())
+    if observed_arms - {0, 1}:
+        raise ValueError(
+            f"Treatment column {treatment_col!r} must be binary 0/1; "
+            f"found values {sorted(repr(value) for value in observed_arms)}"
+        )
+    if require_both_arms and observed_arms != {0, 1}:
+        raise ValueError("Both treatment arms 0 and 1 must be present")
+
+
 def treatment_balance_table(
     data: pd.DataFrame, *, treatment_col: str = "treatment"
 ) -> pd.DataFrame:
-    """Return treatment/control counts and proportions."""
+    """Return raw assignment counts, including missing or invalid labels."""
 
     if treatment_col not in data:
         raise ValueError(f"Treatment column not found: {treatment_col}")
@@ -28,14 +48,39 @@ def outcome_by_treatment(
     treatment_col: str = "treatment",
     outcome_col: str = "conversion",
 ) -> pd.DataFrame:
-    """Calculate observed outcome rates by treatment arm."""
+    """Calculate observed means by treatment arm from complete numeric outcomes.
+
+    Assignments must be observed binary 0/1 labels, and outcomes must be
+    numeric and finite. A single arm is allowed for descriptive summaries,
+    though a treatment-effect contrast requires both arms.
+    """
 
     missing = [column for column in [treatment_col, outcome_col] if column not in data]
     if missing:
         raise ValueError(f"Missing columns: {missing}")
+    if data.empty:
+        raise ValueError("data must not be empty")
+
+    _validate_treatment_assignments(
+        data[treatment_col], treatment_col=treatment_col, require_both_arms=False
+    )
+    try:
+        numeric_outcomes = pd.to_numeric(data[outcome_col], errors="raise")
+        if pd.api.types.is_complex_dtype(numeric_outcomes.dtype):
+            raise ValueError("outcome must contain real numeric values")
+        outcomes = numeric_outcomes.to_numpy(dtype=float, na_value=np.nan)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError("outcome must contain numeric finite values") from exc
+    if not np.isfinite(outcomes).all():
+        raise ValueError("outcome must contain only finite values")
+
+    # Compute from validated numeric data; pandas means otherwise drop nulls
+    # or may try to aggregate non-numeric objects without warning.
+    validated = data[[treatment_col, outcome_col]].copy()
+    validated[outcome_col] = outcomes
 
     summary = (
-        data.groupby(treatment_col, observed=True)[outcome_col]
+        validated.groupby(treatment_col, observed=True)[outcome_col]
         .agg(n="size", outcome_rate="mean", positives="sum")
         .reset_index()
     )
@@ -48,7 +93,7 @@ def naive_average_treatment_effect(
     treatment_col: str = "treatment",
     outcome_col: str = "conversion",
 ) -> float:
-    """Estimate the naive difference in outcome rates between treated and control.
+    """Estimate the naive difference in mean outcomes between treatment arms.
 
     This is appropriate only under randomized treatment assignment and no major
     data quality problems. It is provided as a simple diagnostic, not as a full
@@ -137,19 +182,9 @@ def validate_randomization(
         raise ValueError("smd_threshold must be finite and non-negative")
 
     treatment = data[treatment_col]
-    if treatment.isna().any():
-        raise ValueError(
-            f"Treatment column {treatment_col!r} contains missing treatment assignments"
-        )
-
-    observed_arms = set(treatment.unique())
-    if observed_arms - {0, 1}:
-        raise ValueError(
-            f"Treatment column {treatment_col!r} must be binary 0/1; "
-            f"found values {sorted(repr(value) for value in observed_arms)}"
-        )
-    if observed_arms != {0, 1}:
-        raise ValueError("Both treatment arms 0 and 1 must be present")
+    _validate_treatment_assignments(
+        treatment, treatment_col=treatment_col, require_both_arms=True
+    )
 
     n_total = len(data)
     n_treated = int(treatment.sum())
