@@ -90,6 +90,8 @@ runs the three checks every uplift workflow should pass before any modelling:
    flagging anything with ``|SMD| > 0.10``. If both arms have zero
    within-arm variance, identical means get SMD 0; different means get
    signed infinite SMD and are flagged. Missing arm moments remain undefined.
+   Infinite or complex numeric covariate values are rejected before SMD
+   calculation; ordinary nulls remain visible in the missingness check.
 3. **Missingness.** Per-column null share for downstream feature-spec
    inference.
 

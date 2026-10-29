@@ -197,6 +197,35 @@ def test_validate_randomization_preserves_nan_smd_for_missing_arm_moments() -> N
     assert report.null_share["partially_missing"] == pytest.approx(0.5)
 
 
+@pytest.mark.parametrize("invalid_value", [np.inf, -np.inf])
+def test_validate_randomization_rejects_infinite_covariates(invalid_value: float) -> None:
+    """Infinity is not a missing value and must not hide a broken SMD."""
+    data = pd.DataFrame(
+        {
+            "treatment": [0, 0, 1, 1],
+            "conversion": [0, 1, 0, 1],
+            "recency": [1.0, invalid_value, 2.0, 3.0],
+        }
+    )
+
+    with pytest.raises(ValueError, match="infinite values.*recency"):
+        validate_randomization(data)
+
+
+def test_validate_randomization_rejects_complex_covariates() -> None:
+    """Complex features cannot be converted to real-valued SMDs by truncation."""
+    data = pd.DataFrame(
+        {
+            "treatment": [0, 0, 1, 1],
+            "conversion": [0, 1, 0, 1],
+            "response": [0 + 1j, 0 + 2j, 1 + 3j, 1 + 4j],
+        }
+    )
+
+    with pytest.raises(ValueError, match="real-valued.*response"):
+        validate_randomization(data)
+
+
 def test_validate_randomization_rejects_non_binary_treatment() -> None:
     data = pd.DataFrame(
         {"treatment": [0, 1, 2], "conversion": [0, 0, 1], "feature": [1.0, 2.0, 3.0]}

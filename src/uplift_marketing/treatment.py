@@ -174,7 +174,9 @@ def validate_randomization(
     Treatment assignment must be fully observed, binary, and contain both
     arms. Otherwise the sample-ratio test or balance comparisons would be
     misleading. Datasets without covariates still receive an SRM test and
-    return empty balance tables with the usual schema.
+    return empty balance tables with the usual schema. Numeric covariates may
+    be missing (reported through `null_share`), but infinite and complex
+    values are rejected rather than silently producing undefined SMDs.
     """
 
     if treatment_col not in data:
@@ -212,6 +214,17 @@ def validate_randomization(
     feature_columns = [c for c in data.columns if c not in excluded]
     feature_frame = data[feature_columns]
     numeric = feature_frame.select_dtypes(include="number")
+    complex_features = [
+        column for column in numeric if pd.api.types.is_complex_dtype(numeric[column].dtype)
+    ]
+    if complex_features:
+        raise ValueError(f"Numeric covariates must be real-valued: {complex_features}")
+    numeric_values = numeric.to_numpy(dtype=float, na_value=np.nan)
+    infinite_columns = np.isinf(numeric_values).any(axis=0)
+    if infinite_columns.any():
+        invalid_features = numeric.columns[infinite_columns].tolist()
+        raise ValueError(f"Numeric covariates contain infinite values: {invalid_features}")
+
     non_numeric = feature_frame.drop(columns=numeric.columns)
     if not non_numeric.empty:
         non_numeric = pd.get_dummies(non_numeric, drop_first=False).astype(float)
