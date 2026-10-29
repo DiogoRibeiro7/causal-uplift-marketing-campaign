@@ -99,6 +99,55 @@ def make_uplift_deciles(
     return bins.rank(method="dense", ascending=False).astype(int)
 
 
+def _validated_group_data(
+    data: pd.DataFrame,
+    *,
+    group_col: str,
+    treatment_col: str,
+    outcome_col: str,
+    binary_outcome: bool,
+) -> pd.DataFrame:
+    """Validate all observations before computing subgroup treatment gaps.
+
+    Descriptive group means support finite continuous outcomes. Confidence
+    intervals using Bernoulli variance additionally require binary outcomes.
+    Single-arm groups remain valid inputs and yield unidentified estimates.
+    """
+    required = (group_col, treatment_col, outcome_col)
+    missing = [column for column in required if column not in data]
+    if missing:
+        raise ValueError(f"Missing columns: {missing}")
+    if data.empty:
+        raise ValueError("data must not be empty")
+    if not data.columns.is_unique:
+        raise ValueError("data columns must be unique")
+    if data[group_col].isna().any():
+        raise ValueError(f"group column {group_col!r} must not contain missing values")
+
+    try:
+        treatment = data[treatment_col].to_numpy(dtype=float)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError("treatment must contain only binary 0/1 values") from exc
+    if not np.isfinite(treatment).all() or not np.isin(treatment, (0.0, 1.0)).all():
+        raise ValueError("treatment must contain only binary 0/1 values")
+
+    try:
+        outcomes = data[outcome_col].to_numpy(dtype=float)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError("outcome must contain finite numeric values") from exc
+    if not np.isfinite(outcomes).all():
+        raise ValueError("outcome must contain only finite values")
+    if binary_outcome and not np.isin(outcomes, (0.0, 1.0)).all():
+        raise ValueError("outcome must contain only binary 0/1 values for Bernoulli CIs")
+
+    # Normalize numeric-string or boolean assignments so group comparisons
+    # retain all treatment/control observations instead of silently omitting them.
+    validated = data.copy()
+    validated[treatment_col] = np.asarray(treatment, dtype=np.int64)
+    validated[outcome_col] = outcomes
+    return validated
+
+
 def uplift_by_group(
     data: pd.DataFrame,
     *,
@@ -106,11 +155,15 @@ def uplift_by_group(
     treatment_col: str = "treatment",
     outcome_col: str = "conversion",
 ) -> pd.DataFrame:
-    """Estimate observed uplift by group using treated-control rate difference."""
+    """Estimate per-group treated-control means for finite numeric outcomes."""
 
-    missing = [column for column in [group_col, treatment_col, outcome_col] if column not in data]
-    if missing:
-        raise ValueError(f"Missing columns: {missing}")
+    data = _validated_group_data(
+        data,
+        group_col=group_col,
+        treatment_col=treatment_col,
+        outcome_col=outcome_col,
+        binary_outcome=False,
+    )
 
     rows: list[dict[str, float | int | str]] = []
     for group_value, group_data in data.groupby(group_col, observed=True):
@@ -152,7 +205,9 @@ def subgroup_uplift_with_ci(
 
     The CI is set to ``NaN`` for subgroups whose treated or control arm has
     fewer than ``min_arm_size`` rows, since the normal approximation is
-    unreliable there.
+    unreliable there. This Bernoulli-based interval requires a binary 0/1
+    outcome. For continuous outcomes, use :func:`uplift_by_group` for the
+    descriptive estimate and a suitable continuous-outcome interval method.
 
     This is the per-segment counterpart to the marginal CIs in
     :func:`uplift_marketing.evaluation.bootstrap_policy_value`. It is the
@@ -163,9 +218,19 @@ def subgroup_uplift_with_ci(
 
     if not 0 < confidence < 1:
         raise ValueError("confidence must be in (0, 1)")
-    missing = [c for c in (group_col, treatment_col, outcome_col) if c not in data]
-    if missing:
-        raise ValueError(f"Missing columns: {missing}")
+    if (
+        isinstance(min_arm_size, (bool, np.bool_))
+        or not isinstance(min_arm_size, (int, np.integer))
+        or min_arm_size < 1
+    ):
+        raise ValueError("min_arm_size must be a positive integer")
+    data = _validated_group_data(
+        data,
+        group_col=group_col,
+        treatment_col=treatment_col,
+        outcome_col=outcome_col,
+        binary_outcome=True,
+    )
 
     from math import sqrt
 

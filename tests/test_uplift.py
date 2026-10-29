@@ -182,3 +182,119 @@ def test_subgroup_uplift_with_ci_returns_nan_below_min_arm_size() -> None:
     assert np.isnan(by_device.loc["b", "ci_low"])
     assert not np.isnan(by_device.loc["a", "ci_low"])
     assert not np.isnan(by_device.loc["c", "ci_low"])
+
+
+@pytest.mark.parametrize("invalid", [0.5, -1.0, 2.0, np.nan, np.inf, "unknown"])
+def test_group_uplift_metrics_reject_invalid_treatment(invalid: float | str) -> None:
+    data = pd.DataFrame(
+        {
+            "segment": ["a", "a", "b", "b"],
+            "treatment": [1, 0, 1, invalid],
+            "conversion": [1, 0, 0, 1],
+        }
+    )
+
+    # Bad labels in any segment must not disappear from treatment counts.
+    for metric in (uplift_by_group, subgroup_uplift_with_ci):
+        with pytest.raises(ValueError, match="treatment.*binary 0/1"):
+            metric(data, group_col="segment")
+
+
+@pytest.mark.parametrize("invalid", [np.nan, np.inf, -np.inf, "not-numeric"])
+def test_group_uplift_metrics_reject_nonfinite_outcomes(invalid: float | str) -> None:
+    data = pd.DataFrame(
+        {
+            "segment": ["a", "a", "b", "b"],
+            "treatment": [1, 0, 1, 0],
+            "conversion": [1.0, 0.0, 0.0, invalid],
+        }
+    )
+
+    for metric in (uplift_by_group, subgroup_uplift_with_ci):
+        with pytest.raises(ValueError, match="outcome.*finite"):
+            metric(data, group_col="segment")
+
+
+def test_group_uplift_metrics_accept_numeric_string_labels() -> None:
+    treatment = np.tile(["1", "0"], 80)
+    outcomes = np.tile([1, 0, 0, 0, 1, 1, 0, 0], 20)
+    data = pd.DataFrame(
+        {"segment": ["north"] * 160, "treatment": treatment, "conversion": outcomes}
+    )
+
+    observed = uplift_by_group(data, group_col="segment")
+    confidence = subgroup_uplift_with_ci(data, group_col="segment", min_arm_size=5)
+
+    assert observed.loc[0, "treated_n"] == 80
+    assert observed.loc[0, "control_n"] == 80
+    assert observed.loc[0, "observed_uplift"] == pytest.approx(0.25)
+    assert confidence.loc[0, "observed_uplift"] == pytest.approx(0.25)
+    assert np.isfinite(confidence.loc[0, ["ci_low", "ci_high"]].to_numpy(dtype=float)).all()
+
+
+def test_group_uplift_allows_continuous_outcomes_but_binary_ci_rejects_them() -> None:
+    data = pd.DataFrame(
+        {
+            "segment": ["a"] * 80,
+            "treatment": [1, 0] * 40,
+            "conversion": [2.5, 0.5] * 40,
+        }
+    )
+
+    assert uplift_by_group(data, group_col="segment").loc[0, "observed_uplift"] == 2.0
+    with pytest.raises(ValueError, match="outcome.*binary 0/1"):
+        subgroup_uplift_with_ci(data, group_col="segment", min_arm_size=5)
+
+
+def test_group_uplift_metrics_reject_missing_groups() -> None:
+    data = pd.DataFrame(
+        {
+            "segment": ["a", "a", "b", None],
+            "treatment": [1, 0, 1, 0],
+            "conversion": [1, 0, 1, 0],
+        }
+    )
+
+    for metric in (uplift_by_group, subgroup_uplift_with_ci):
+        with pytest.raises(ValueError, match="group.*missing"):
+            metric(data, group_col="segment")
+
+
+def test_group_uplift_metrics_reject_empty_data() -> None:
+    data = pd.DataFrame(columns=["segment", "treatment", "conversion"])
+
+    for metric in (uplift_by_group, subgroup_uplift_with_ci):
+        with pytest.raises(ValueError, match="data must not be empty"):
+            metric(data, group_col="segment")
+
+
+def test_group_uplift_metrics_preserve_unidentified_single_arm_groups() -> None:
+    data = pd.DataFrame(
+        {
+            "segment": ["treated"] * 2 + ["control"] * 2 + ["both"] * 2,
+            "treatment": [1, 1, 0, 0, 1, 0],
+            "conversion": [1, 0, 1, 0, 1, 0],
+        }
+    )
+
+    observed = uplift_by_group(data, group_col="segment").set_index("segment")
+    confidence = subgroup_uplift_with_ci(
+        data, group_col="segment", min_arm_size=2
+    ).set_index("segment")
+
+    for group in ("treated", "control"):
+        assert np.isnan(observed.loc[group, "observed_uplift"])
+        assert np.isnan(confidence.loc[group, "observed_uplift"])
+        assert np.isnan(confidence.loc[group, "ci_low"])
+    assert observed.loc["both", "observed_uplift"] == pytest.approx(1.0)
+    assert confidence.loc["both", "observed_uplift"] == pytest.approx(1.0)
+
+
+@pytest.mark.parametrize("min_arm_size", [0, -1, 1.5, np.inf, True])
+def test_subgroup_uplift_ci_rejects_invalid_min_arm_size(min_arm_size: float) -> None:
+    data = pd.DataFrame(
+        {"segment": ["a"] * 4, "treatment": [1, 0, 1, 0], "conversion": [1, 0, 1, 0]}
+    )
+
+    with pytest.raises(ValueError, match="min_arm_size"):
+        subgroup_uplift_with_ci(data, group_col="segment", min_arm_size=min_arm_size)
