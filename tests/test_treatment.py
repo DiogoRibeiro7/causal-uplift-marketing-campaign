@@ -144,6 +144,59 @@ def test_validate_randomization_flags_imbalanced_covariate() -> None:
     assert "feature" in flagged
 
 
+@pytest.mark.parametrize("treated_value,expected_sign", [(1.0, 1), (-1.0, -1)])
+def test_validate_randomization_flags_perfectly_separated_constant_arms(
+    treated_value: float, expected_sign: int
+) -> None:
+    """A deterministic arm difference is severe imbalance, not undefined SMD."""
+    data = pd.DataFrame(
+        {
+            "treatment": [0, 0, 0, 1, 1, 1],
+            "conversion": [0, 0, 1, 1, 0, 1],
+            "feature": [0.0] * 3 + [treated_value] * 3,
+        }
+    )
+
+    report = validate_randomization(data)
+
+    smd = float(report.balance.loc[0, "smd"])
+    assert np.isinf(smd)
+    assert np.sign(smd) == expected_sign
+    assert report.imbalanced_features["feature"].tolist() == ["feature"]
+
+
+def test_validate_randomization_treats_identical_constant_arms_as_balanced() -> None:
+    """A feature constant across both arms has an exact zero mean difference."""
+    data = pd.DataFrame(
+        {
+            "treatment": [0, 0, 1, 1],
+            "conversion": [0, 1, 1, 0],
+            "constant": [7.0] * 4,
+        }
+    )
+
+    report = validate_randomization(data)
+
+    assert report.balance.loc[0, "smd"] == pytest.approx(0.0)
+    assert report.imbalanced_features.empty
+
+
+def test_validate_randomization_preserves_nan_smd_for_missing_arm_moments() -> None:
+    """Unobserved covariates should be diagnosed via null share, not as balanced."""
+    data = pd.DataFrame(
+        {
+            "treatment": [0, 0, 1, 1],
+            "conversion": [0, 1, 0, 1],
+            "partially_missing": [np.nan, np.nan, 1.0, 1.0],
+        }
+    )
+
+    report = validate_randomization(data)
+
+    assert np.isnan(float(report.balance.loc[0, "smd"]))
+    assert report.null_share["partially_missing"] == pytest.approx(0.5)
+
+
 def test_validate_randomization_rejects_non_binary_treatment() -> None:
     data = pd.DataFrame(
         {"treatment": [0, 1, 2], "conversion": [0, 0, 1], "feature": [1.0, 2.0, 3.0]}

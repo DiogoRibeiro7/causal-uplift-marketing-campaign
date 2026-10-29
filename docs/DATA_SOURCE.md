@@ -81,7 +81,9 @@ runs the three checks every uplift workflow should pass before any modelling:
 
 1. **Sample ratio mismatch.** Chi-square against the expected treated share.
 2. **Covariate balance.** Standardized mean difference (SMD) per feature,
-   flagging anything with ``|SMD| > 0.10``.
+   flagging anything with ``|SMD| > 0.10``. If both arms have zero
+   within-arm variance, identical means get SMD 0; different means get
+   signed infinite SMD and are flagged. Missing arm moments remain undefined.
 3. **Missingness.** Per-column null share for downstream feature-spec
    inference.
 
