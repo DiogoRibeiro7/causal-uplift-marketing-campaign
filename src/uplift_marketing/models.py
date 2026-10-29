@@ -19,7 +19,11 @@ from sklearn.linear_model import LogisticRegression, Ridge
 from sklearn.model_selection import StratifiedKFold
 from sklearn.pipeline import Pipeline
 
-from uplift_marketing.features import FeatureSpec, build_preprocessor
+from uplift_marketing.features import (
+    FeatureSpec,
+    _validated_binary_indicator,
+    build_preprocessor,
+)
 
 ArrayLike: TypeAlias = NDArray[Any] | pd.Series
 
@@ -106,13 +110,17 @@ class SLearner:
         self.pipeline_: Pipeline | None = None
 
     def fit(self, x: pd.DataFrame, treatment: ArrayLike, y: ArrayLike) -> SLearner:
-        """Fit the S-learner."""
+        """Fit the S-learner on fully observed binary experiment labels."""
 
         if len(x) != len(treatment) or len(x) != len(y):
             raise ValueError("x, treatment, and y must have the same length")
 
+        treatment_array = _validated_binary_indicator(
+            treatment, name="treatment", require_both=True
+        )
+        y_array = _validated_binary_indicator(y, name="outcome")
         training_frame = x.copy()
-        training_frame[self.treatment_col] = np.asarray(treatment).astype(int)
+        training_frame[self.treatment_col] = treatment_array
 
         spec_with_treatment = FeatureSpec(
             numerical=[*self.spec.numerical, self.treatment_col],
@@ -125,7 +133,7 @@ class SLearner:
                 ("model", clone(self.base_model)),
             ]
         )
-        self.pipeline_.fit(training_frame, np.asarray(y).astype(int))
+        self.pipeline_.fit(training_frame, y_array)
         return self
 
     def predict_potential_outcomes(self, x: pd.DataFrame) -> tuple[NDArray[Any], NDArray[Any]]:
@@ -220,10 +228,10 @@ class TLearner:
         if len(x) != len(treatment) or len(x) != len(y):
             raise ValueError("x, treatment, and y must have the same length")
 
-        treatment_array = np.asarray(treatment).astype(int)
-        y_array = np.asarray(y).astype(int)
-        if set(np.unique(treatment_array)) != {0, 1}:
-            raise ValueError("Both treatment arms 0 and 1 are required")
+        treatment_array = _validated_binary_indicator(
+            treatment, name="treatment", require_both=True
+        )
+        y_array = _validated_binary_indicator(y, name="outcome")
 
         treated_mask = treatment_array == 1
         control_mask = treatment_array == 0
@@ -302,10 +310,10 @@ class XLearner:
         if len(x) != len(treatment) or len(x) != len(y):
             raise ValueError("x, treatment, and y must have the same length")
 
-        treatment_array = np.asarray(treatment).astype(int)
-        y_array = np.asarray(y).astype(int)
-        if set(np.unique(treatment_array)) != {0, 1}:
-            raise ValueError("Both treatment arms 0 and 1 are required")
+        treatment_array = _validated_binary_indicator(
+            treatment, name="treatment", require_both=True
+        )
+        y_array = _validated_binary_indicator(y, name="outcome")
 
         treated_mask = treatment_array == 1
         control_mask = treatment_array == 0
@@ -452,12 +460,12 @@ def cross_fit_uplift_oof(
         raise ValueError("n_splits must be >= 2")
 
     x_idx = x.reset_index(drop=True)
-    treatment_arr = np.asarray(treatment).astype(int)
-    y_arr = np.asarray(y).astype(int)
+    treatment_arr = _validated_binary_indicator(treatment, name="treatment", require_both=True)
+    y_arr = _validated_binary_indicator(y, name="outcome")
     if len(x_idx) != len(treatment_arr) or len(x_idx) != len(y_arr):
         raise ValueError("x, treatment, and y must have the same length")
-    if set(np.unique(treatment_arr)) - {0, 1}:
-        raise ValueError("treatment must be binary 0/1")
+    if np.bincount(treatment_arr, minlength=2).min() < n_splits:
+        raise ValueError("Each treatment arm must contain at least n_splits observations")
 
     stratify = treatment_arr.astype(str).astype(object) + "_" + y_arr.astype(str).astype(object)
 
@@ -524,12 +532,12 @@ class DRLearner:
         """Fit the DR-learner via cross-fitted pseudo-outcomes."""
 
         x_local = x.reset_index(drop=True)
-        treatment_arr = np.asarray(treatment).astype(int)
-        y_arr = np.asarray(y).astype(int)
+        treatment_arr = _validated_binary_indicator(treatment, name="treatment", require_both=True)
+        y_arr = _validated_binary_indicator(y, name="outcome")
         if len(x_local) != len(treatment_arr) or len(x_local) != len(y_arr):
             raise ValueError("x, treatment, and y must have the same length")
-        if set(np.unique(treatment_arr)) != {0, 1}:
-            raise ValueError("Both treatment arms 0 and 1 are required")
+        if np.bincount(treatment_arr, minlength=2).min() < self.n_splits:
+            raise ValueError("Each treatment arm must contain at least n_splits observations")
 
         n = len(x_local)
         pseudo = np.zeros(n, dtype=float)

@@ -29,6 +29,12 @@ to preserve joint stratification, it emits a warning and stratifies on
 treatment alone; conversion balance within each arm is then not guaranteed.
 If even the treatment-arm balance is impossible, the split raises an error.
 
+S-, T-, X-, and doubly robust learners also validate the original treatment
+and binary conversion labels when fitted directly. Models require both arms,
+and cross-fitting requires at least as many observations per arm as folds.
+Validation is performed before integer conversion, including for OOF uplift
+predictions, so malformed labels cannot silently change the learned effects.
+
 ## No leakage
 
 Features must be measured before campaign exposure. Variables created after treatment can leak outcome information or treatment effects.
