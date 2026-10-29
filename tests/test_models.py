@@ -194,3 +194,116 @@ def test_positive_probability_respects_class_column_order() -> None:
     positive_probability = _positive_class_probability(_ReversedBinaryClassifier(), x)
 
     assert np.allclose(positive_probability, 0.8)
+
+
+@pytest.mark.parametrize("learner_type", [SLearner, TLearner, XLearner, DRLearner])
+@pytest.mark.parametrize(
+    ("label", "invalid_value"),
+    [
+        ("treatment", 0.4),
+        ("treatment", np.nan),
+        ("treatment", np.inf),
+        ("outcome", 0.4),
+        ("outcome", np.nan),
+    ],
+)
+def test_meta_learners_validate_binary_labels_before_cast(
+    learner_type: type[SLearner] | type[TLearner] | type[XLearner] | type[DRLearner],
+    label: str,
+    invalid_value: float,
+) -> None:
+    """Direct model users must not silently truncate observed experiment labels."""
+    x, treatment, outcome = _constant_outcome_by_arm()
+    bad_treatment = treatment.astype(float)
+    bad_outcome = outcome.astype(float)
+    if label == "treatment":
+        bad_treatment[0] = invalid_value
+    else:
+        bad_outcome[0] = invalid_value
+
+    spec = FeatureSpec(numerical=["signal"], categorical=[], excluded=[])
+    model = learner_type(spec=spec, base_model=DummyClassifier())
+    with pytest.raises(ValueError, match=f"{label}.*binary 0/1"):
+        model.fit(x, bad_treatment, bad_outcome)
+
+
+@pytest.mark.parametrize("learner_type", [SLearner, TLearner, XLearner, DRLearner])
+def test_meta_learners_require_both_treatment_arms(
+    learner_type: type[SLearner] | type[TLearner] | type[XLearner] | type[DRLearner],
+) -> None:
+    """Without controls, modelled counterfactuals have no empirical support."""
+    x, _, outcome = _constant_outcome_by_arm()
+    spec = FeatureSpec(numerical=["signal"], categorical=[], excluded=[])
+    model = learner_type(spec=spec, base_model=DummyClassifier())
+    with pytest.raises(ValueError, match="Both treatment arms"):
+        model.fit(x, np.ones(len(x), dtype=int), outcome)
+
+
+@pytest.mark.parametrize("learner_type", [SLearner, TLearner, XLearner, DRLearner])
+def test_meta_learners_accept_boolean_experimental_labels(
+    learner_type: type[SLearner] | type[TLearner] | type[XLearner] | type[DRLearner],
+) -> None:
+    """Bool-labelled experiments remain supported through direct fit calls."""
+    x, treatment, outcome = _constant_outcome_by_arm()
+    spec = FeatureSpec(numerical=["signal"], categorical=[], excluded=[])
+    model = learner_type(spec=spec, base_model=DummyClassifier(), random_state=1)
+    model.fit(x, treatment.astype(bool), outcome.astype(bool))
+    assert np.isfinite(model.predict_uplift(x)).all()
+
+
+@pytest.mark.parametrize(
+    ("label", "invalid_value"),
+    [("treatment", 0.4), ("treatment", np.nan), ("outcome", 0.4), ("outcome", np.inf)],
+)
+def test_cross_fit_rejects_invalid_binary_labels(
+    label: str, invalid_value: float
+) -> None:
+    """OOF metrics must not be computed from altered treatment or outcome labels."""
+    x, treatment, outcome = _constant_outcome_by_arm()
+    bad_treatment = treatment.astype(float)
+    bad_outcome = outcome.astype(float)
+    if label == "treatment":
+        bad_treatment[0] = invalid_value
+    else:
+        bad_outcome[0] = invalid_value
+    spec = FeatureSpec(numerical=["signal"], categorical=[], excluded=[])
+
+    with pytest.raises(ValueError, match=f"{label}.*binary 0/1"):
+        cross_fit_uplift_oof(
+            lambda: TLearner(spec=spec, base_model=DummyClassifier()),
+            x,
+            bad_treatment,
+            bad_outcome,
+            n_splits=3,
+        )
+
+
+def test_cross_fit_rejects_insufficient_treatment_arm_count() -> None:
+    """A fold count larger than an arm cannot support honest OOF comparison."""
+    x, _, outcome = _constant_outcome_by_arm()
+    treatment = np.r_[np.zeros(22, dtype=int), np.ones(2, dtype=int)]
+    spec = FeatureSpec(numerical=["signal"], categorical=[], excluded=[])
+
+    with pytest.raises(ValueError, match="at least n_splits"):
+        cross_fit_uplift_oof(
+            lambda: TLearner(spec=spec, base_model=DummyClassifier()),
+            x,
+            treatment,
+            outcome,
+            n_splits=3,
+        )
+
+
+def test_cross_fit_accepts_boolean_labels() -> None:
+    """OOF predictions work on Boolean treatment and outcome vectors."""
+    x, treatment, outcome = _constant_outcome_by_arm()
+    spec = FeatureSpec(numerical=["signal"], categorical=[], excluded=[])
+    uplift = cross_fit_uplift_oof(
+        lambda: TLearner(spec=spec, base_model=DummyClassifier()),
+        x,
+        treatment.astype(bool),
+        outcome.astype(bool),
+        n_splits=3,
+    )
+    assert uplift.shape == (len(x),)
+    assert np.isfinite(uplift).all()
