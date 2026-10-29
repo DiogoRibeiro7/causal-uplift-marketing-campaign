@@ -29,6 +29,15 @@ be continuous. Bootstrap draws that happen to contain only one treatment arm
 are still marked as unidentifiable, whereas malformed original labels are
 rejected instead of silently excluded from a rate calculation.
 
+Group-level uplift diagnostics also require complete group identifiers, binary
+0/1 treatment assignments, and finite numeric outcomes across every group.
+`uplift_by_group` reports treated-minus-control means, including for continuous
+outcomes. `subgroup_uplift_with_ci` uses a Bernoulli normal-approximation
+variance, so it requires binary 0/1 outcomes and a positive integer minimum
+arm size; continuous outcomes require a different interval estimator. Groups
+with no observations in one treatment arm retain unidentifiable (NaN) uplift
+estimates instead of silently contributing to the comparison.
+
 The modelling feature splitter and `honest_train_test_split` require observed
 binary treatment and conversion labels. They reject fractional and non-finite
 values before integer conversion. An honest split keeps both treatment arms
