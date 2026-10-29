@@ -74,6 +74,12 @@ df = load_hillstrom(
 - `"mens"` / `"womens"` — keep only the chosen arm and the No E-Mail control
   (≈42,600 rows, cleaner experimental contrast at the cost of fewer rows).
 
+The adapter requires known, non-missing treatment labels and both treatment
+arms after filtering. It also checks that the selected outcome is fully
+observed and binary before converting it to integers. Invalid labels raise
+an error instead of silently turning unknown treatments into controls or
+fractional outcomes into binary events.
+
 ### Validation
 
 [`uplift_marketing.treatment.validate_randomization`](../src/uplift_marketing/treatment.py)

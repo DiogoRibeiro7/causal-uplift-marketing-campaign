@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from pathlib import Path
+from typing import Literal
+
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -40,7 +44,7 @@ def test_prepare_uplift_frame_normalizes_yes_no_labels() -> None:
     assert prepared["conversion"].tolist() == [1, 0]
 
 
-def _hillstrom_fixture(tmp_path):  # type: ignore[no-untyped-def]
+def _hillstrom_fixture(tmp_path: Path) -> Path:
     """Write a tiny CSV with the canonical Hillstrom schema."""
 
     raw = pd.DataFrame(
@@ -105,6 +109,75 @@ def test_load_hillstrom_rejects_unknown_arm(tmp_path) -> None:  # type: ignore[n
     path = _hillstrom_fixture(tmp_path)
     with pytest.raises(ValueError, match="treated_arm"):
         load_hillstrom(path, treated_arm="other")  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("invalid_segment", ["Unknown E-Mail", None])
+def test_load_hillstrom_rejects_invalid_treatment_labels(
+    tmp_path: Path, invalid_segment: str | None
+) -> None:
+    """Unknown assignments must not be silently added to the control arm."""
+    path = _hillstrom_fixture(tmp_path)
+    raw = pd.read_csv(path)
+    raw.loc[0, "segment"] = invalid_segment
+    raw.to_csv(path, index=False)
+
+    with pytest.raises(ValueError, match="unknown treatment labels|missing treatment assignments"):
+        load_hillstrom(path)
+
+
+@pytest.mark.parametrize("treated_arm", ["mens", "womens"])
+def test_load_hillstrom_requires_both_arms_after_filtering(
+    tmp_path: Path, treated_arm: Literal["mens", "womens"]
+) -> None:
+    """The selected creative needs actual treated observations and controls."""
+    path = _hillstrom_fixture(tmp_path)
+    raw = pd.read_csv(path)
+    raw.loc[raw["segment"] == f"{treated_arm.capitalize()} E-Mail", "segment"] = "No E-Mail"
+    raw.to_csv(path, index=False)
+
+    with pytest.raises(ValueError, match="Both treatment arms"):
+        load_hillstrom(path, treated_arm=treated_arm)
+
+
+def test_load_hillstrom_requires_control_observations(tmp_path: Path) -> None:
+    """A source with only emailed customers cannot identify campaign lift."""
+    path = _hillstrom_fixture(tmp_path)
+    raw = pd.read_csv(path)
+    raw["segment"] = raw["segment"].replace({"No E-Mail": "Mens E-Mail"})
+    raw.to_csv(path, index=False)
+
+    with pytest.raises(ValueError, match="Both treatment arms"):
+        load_hillstrom(path)
+
+
+@pytest.mark.parametrize("outcome", ["conversion", "visit"])
+@pytest.mark.parametrize("invalid_value", [0.5, np.nan, np.inf, "invalid"])
+def test_load_hillstrom_rejects_invalid_selected_outcome(
+    tmp_path: Path, outcome: Literal["conversion", "visit"], invalid_value: object
+) -> None:
+    """Fractional or missing outcomes cannot be truncated into binary labels."""
+    path = _hillstrom_fixture(tmp_path)
+    raw = pd.read_csv(path)
+    raw[outcome] = raw[outcome].astype(object)
+    raw.loc[0, outcome] = invalid_value
+    raw.to_csv(path, index=False)
+
+    with pytest.raises(ValueError, match="must be binary 0/1"):
+        load_hillstrom(path, outcome=outcome)
+
+
+def test_load_hillstrom_validates_only_the_selected_arm_outcomes(tmp_path: Path) -> None:
+    """A dropped creative does not invalidate the retained binary experiment."""
+    path = _hillstrom_fixture(tmp_path)
+    raw = pd.read_csv(path)
+    raw["conversion"] = raw["conversion"].astype(float)
+    raw.loc[raw["segment"] == "Womens E-Mail", "conversion"] = 0.5
+    raw.to_csv(path, index=False)
+
+    selected = load_hillstrom(path, treated_arm="mens")
+
+    assert len(selected) == 4
+    assert set(selected["conversion"]) <= {0, 1}
 
 
 def test_load_default_uplift_data_falls_back_to_synthetic(tmp_path) -> None:  # type: ignore[no-untyped-def]
