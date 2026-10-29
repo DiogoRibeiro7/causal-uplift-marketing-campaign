@@ -47,6 +47,53 @@ def test_curve_areas_include_zero_contact_origin() -> None:
     assert area_under_uplift(curve) == pytest.approx(2.0)
 
 
+@pytest.mark.parametrize(
+    "fractions",
+    [
+        [0.25, 0.75],  # Truncated ranked population.
+        [0.25, 1.25],  # Fractions cannot exceed the full population.
+        [0.0, 0.5],  # An explicit zero origin does not make a partial curve complete.
+    ],
+)
+def test_curve_areas_require_full_population_endpoint(fractions: list[float]) -> None:
+    curve = pd.DataFrame(
+        {"population_fraction": fractions, "incremental_gain": [0.0, 2.0]}
+    )
+
+    for metric in (area_under_qini, area_under_uplift):
+        with pytest.raises(ValueError, match="end at 1.0"):
+            metric(curve)
+
+
+def test_curve_areas_tolerate_small_endpoint_rounding() -> None:
+    curve = pd.DataFrame(
+        {
+            "population_fraction": [0.0, 0.5, 1.0 - 5.0e-13],
+            "incremental_gain": [0.0, 2.0, 4.0],
+        }
+    )
+
+    for metric in (area_under_qini, area_under_uplift):
+        assert metric(curve) == pytest.approx(2.0)
+
+
+def test_curve_areas_allow_one_customer_with_implicit_origin() -> None:
+    curve = pd.DataFrame({"population_fraction": [1.0], "incremental_gain": [4.0]})
+
+    for metric in (area_under_qini, area_under_uplift):
+        assert metric(curve) == pytest.approx(2.0)
+
+
+def test_curve_areas_report_nonnumeric_inputs() -> None:
+    curve = pd.DataFrame(
+        {"population_fraction": [0.5, "not-a-fraction"], "incremental_gain": [2.0, 4.0]}
+    )
+
+    for metric in (area_under_qini, area_under_uplift):
+        with pytest.raises(ValueError, match="numeric population fractions"):
+            metric(curve)
+
+
 def test_tied_scores_have_row_order_invariant_qini_and_uplift_curves() -> None:
     outcome = np.array([1, 0, 0, 1, 1, 0], dtype=int)
     treatment = np.array([1, 1, 0, 0, 1, 0], dtype=int)
