@@ -29,7 +29,8 @@ a synthetic generator when the real data is unavailable.
 - **Honest evaluation** — Qini, treatment-share-adjusted AUUC, normalized
   Qini, bootstrap CIs on policy value, decile stability, subgroup-level
   uplift with CIs. Qini/AUUC areas include the no-contact origin, and
-  tied scores receive neutral interpolation instead of arbitrary ordering.
+  require curves to cover the complete population. Tied scores receive neutral
+  interpolation instead of arbitrary ordering.
 - **Profit-optimal targeting** — `CampaignEconomics`, `optimize_budget`
   (searches every possible top-k size by default, returning the cut-off
   score, customer list, and predicted economics;

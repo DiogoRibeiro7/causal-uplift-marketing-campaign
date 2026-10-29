@@ -108,18 +108,29 @@ def _interpolate_tied_gains(
 
 
 def _area_from_zero(curve: pd.DataFrame) -> float:
-    """Integrate cumulative gains from the no-contact point (0, 0)."""
+    """Integrate a complete population curve from the no-contact point (0, 0).
+
+    Qini and AUUC are full-population summaries: a partial ranking should not
+    be silently reported as if its integrated area covered all customers.
+    """
     required = {"population_fraction", "incremental_gain"}
     missing = required - set(curve.columns)
     if missing:
         raise ValueError(f"Missing columns: {sorted(missing)}")
 
-    x = curve["population_fraction"].to_numpy(dtype=float)
-    y = curve["incremental_gain"].to_numpy(dtype=float)
+    try:
+        x = curve["population_fraction"].to_numpy(dtype=float)
+        y = curve["incremental_gain"].to_numpy(dtype=float)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError("curve must contain numeric population fractions and gains") from exc
+    if x.ndim != 1 or y.ndim != 1:
+        raise ValueError("population fractions and gains must be one-dimensional")
     if not len(x) or not np.isfinite(x).all() or not np.isfinite(y).all():
         raise ValueError("curve must contain finite population fractions and gains")
     if x[0] < 0 or np.any(np.diff(x) <= 0):
         raise ValueError("population_fraction must be strictly increasing from zero")
+    if not np.isclose(x[-1], 1.0, rtol=0.0, atol=1.0e-12):
+        raise ValueError("population_fraction must end at 1.0 (the full population)")
     if x[0] == 0.0:
         if y[0] != 0.0:
             raise ValueError("the no-contact point must have zero gain")
@@ -186,7 +197,7 @@ def qini_curve(
 
 
 def area_under_qini(curve: pd.DataFrame) -> float:
-    """Area under a Qini-style curve, including the no-contact origin."""
+    """Area under a complete Qini curve, including the no-contact origin."""
     return _area_from_zero(curve)
 
 
@@ -318,7 +329,7 @@ def uplift_curve(
 
 
 def area_under_uplift(curve: pd.DataFrame) -> float:
-    """Area under cumulative uplift, including the no-contact origin."""
+    """Area under complete cumulative uplift, including the no-contact origin."""
     return _area_from_zero(curve)
 
 
