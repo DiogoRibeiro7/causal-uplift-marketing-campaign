@@ -98,6 +98,30 @@ def _positive_class_probability(model: BaseEstimator, x: pd.DataFrame) -> NDArra
     return np.asarray(probabilities[:, int(positive_columns[0])], dtype=float)
 
 
+def _validated_effect_prediction(
+    values: NDArray[Any], *, name: str, expected_length: int
+) -> NDArray[np.float64]:
+    """Require one finite, row-aligned treatment-effect prediction per customer.
+
+    Unlike potential-outcome probabilities, effect-regressor predictions are
+    not restricted to [-1, 1]: an unconstrained regressor may extrapolate.
+    Reject malformed outputs instead of broadcasting a scalar across a fold
+    or returning an invalid score to a campaign targeting policy.
+    """
+
+    if np.iscomplexobj(values):
+        raise ValueError(f"{name} predictions must be real numeric values")
+    try:
+        effects = np.asarray(values, dtype=np.float64)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError(f"{name} predictions must be real numeric values") from exc
+    if effects.shape != (expected_length,):
+        raise ValueError(f"{name} must return one prediction per row as a 1D vector")
+    if not np.isfinite(effects).all():
+        raise ValueError(f"{name} predictions must be finite")
+    return effects
+
+
 @dataclass
 class SLearner:
     """S-learner uplift model.
@@ -406,8 +430,16 @@ class XLearner:
         if self.treated_effect_pipeline_ is None or self.control_effect_pipeline_ is None:
             raise RuntimeError("Model is not fitted")
 
-        tau_treated = np.asarray(self.treated_effect_pipeline_.predict(x), dtype=float)
-        tau_control = np.asarray(self.control_effect_pipeline_.predict(x), dtype=float)
+        tau_treated = _validated_effect_prediction(
+            self.treated_effect_pipeline_.predict(x),
+            name="treated effect model",
+            expected_length=len(x),
+        )
+        tau_control = _validated_effect_prediction(
+            self.control_effect_pipeline_.predict(x),
+            name="control effect model",
+            expected_length=len(x),
+        )
 
         g = np.asarray(propensity, dtype=float)
         if g.ndim == 0:
@@ -488,7 +520,11 @@ def cross_fit_uplift_oof(
             treatment_arr[tr_idx],
             y_arr[tr_idx],
         )
-        oof[te_idx] = np.asarray(model.predict_uplift(x_idx.iloc[te_idx]))
+        oof[te_idx] = _validated_effect_prediction(
+            model.predict_uplift(x_idx.iloc[te_idx]),
+            name="cross-fit model",
+            expected_length=len(te_idx),
+        )
     return oof
 
 
@@ -625,4 +661,8 @@ class DRLearner:
 
         if self.effect_pipeline_ is None:
             raise RuntimeError("Model is not fitted")
-        return np.asarray(self.effect_pipeline_.predict(x))
+        return _validated_effect_prediction(
+            self.effect_pipeline_.predict(x),
+            name="DR-learner effect model",
+            expected_length=len(x),
+        )

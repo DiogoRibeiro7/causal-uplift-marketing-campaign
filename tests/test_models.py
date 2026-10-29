@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
 import pandas as pd
 import pytest
 from numpy.typing import NDArray
-from sklearn.base import BaseEstimator
+from sklearn.base import BaseEstimator, RegressorMixin
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.dummy import DummyClassifier
 from sklearn.model_selection import train_test_split
@@ -367,3 +369,134 @@ def test_x_learner_rejects_invalid_propensity_weights(
 
     with pytest.raises(ValueError, match=r"propensity.*finite|propensity.*\[0, 1\]"):
         model.predict_uplift(x, propensity=propensity)
+
+
+def _effect_predictions(kind: str, n_rows: int) -> NDArray[Any]:
+    """Build malformed or extrapolated effect predictions for boundary tests."""
+
+    if kind == "scalar":
+        return np.asarray(0.3)
+    if kind == "column":
+        return np.full((n_rows, 1), 0.3)
+    if kind == "short":
+        return np.full(n_rows - 1, 0.3)
+    if kind == "nan":
+        return np.full(n_rows, np.nan)
+    if kind == "infinite":
+        return np.full(n_rows, np.inf)
+    if kind == "complex":
+        return np.full(n_rows, 0.3 + 0.1j)
+    if kind == "nonnumeric":
+        return np.full(n_rows, "not-an-effect")
+    if kind == "extrapolated":
+        return np.full(n_rows, 1.5)
+    raise ValueError(f"Unknown prediction shape: {kind}")
+
+
+class _ControlledUpliftModel:
+    """OOF meta-learner whose prediction contract can be deliberately broken."""
+
+    def __init__(self, kind: str) -> None:
+        self.kind = kind
+
+    def fit(
+        self,
+        x: pd.DataFrame,
+        treatment: NDArray[Any] | pd.Series,
+        y: NDArray[Any] | pd.Series,
+    ) -> _ControlledUpliftModel:
+        """Stand in for fitting without changing the controlled prediction."""
+        return self
+
+    def predict_uplift(self, x: pd.DataFrame) -> NDArray[Any]:
+        """Return the requested malformed or valid uplift predictions."""
+        return _effect_predictions(self.kind, len(x))
+
+
+class _ControlledEffectRegressor(RegressorMixin, BaseEstimator):
+    """Cloneable effect-stage regressor exposing the same boundary cases."""
+
+    def __init__(self, kind: str) -> None:
+        self.kind = kind
+
+    def fit(self, x: NDArray[Any], y: NDArray[Any]) -> _ControlledEffectRegressor:
+        """Mark the regression stage as fitted for the sklearn pipeline."""
+        self.fitted_ = True
+        return self
+
+    def predict(self, x: NDArray[Any]) -> NDArray[Any]:
+        """Return a deliberately controlled second-stage effect vector."""
+        return _effect_predictions(self.kind, len(x))
+
+
+@pytest.mark.parametrize(
+    ("kind", "message"),
+    [
+        ("scalar", "one prediction per row"),
+        ("column", "one prediction per row"),
+        ("short", "one prediction per row"),
+        ("nan", "finite"),
+        ("infinite", "finite"),
+        ("complex", "real numeric"),
+        ("nonnumeric", "real numeric"),
+    ],
+)
+def test_cross_fit_rejects_malformed_held_out_effects(kind: str, message: str) -> None:
+    """A scalar score must never silently broadcast across a held-out fold."""
+    x, treatment, outcome = _constant_outcome_by_arm()
+
+    with pytest.raises(ValueError, match=message):
+        cross_fit_uplift_oof(
+            lambda: _ControlledUpliftModel(kind),
+            x,
+            treatment,
+            outcome,
+            n_splits=3,
+        )
+
+
+@pytest.mark.parametrize("learner_type", [XLearner, DRLearner])
+@pytest.mark.parametrize(
+    ("kind", "message"),
+    [
+        ("scalar", "one prediction per row"),
+        ("column", "one prediction per row"),
+        ("short", "one prediction per row"),
+        ("nan", "finite"),
+        ("infinite", "finite"),
+        ("complex", "real numeric"),
+        ("nonnumeric", "real numeric"),
+    ],
+)
+def test_effect_learners_reject_malformed_regression_scores(
+    learner_type: type[XLearner] | type[DRLearner], kind: str, message: str
+) -> None:
+    """Policy-facing uplift estimates must be finite and aligned with each row."""
+    x, treatment, outcome = _constant_outcome_by_arm()
+    spec = FeatureSpec(numerical=["signal"], categorical=[], excluded=[])
+    learner = learner_type(
+        spec=spec,
+        base_model=DummyClassifier(),
+        effect_model=_ControlledEffectRegressor(kind),
+        random_state=1,
+    ).fit(x, treatment, outcome)
+
+    with pytest.raises(ValueError, match=message):
+        learner.predict_uplift(x)
+
+
+@pytest.mark.parametrize("learner_type", [XLearner, DRLearner])
+def test_effect_learners_do_not_silently_clip_extrapolated_scores(
+    learner_type: type[XLearner] | type[DRLearner],
+) -> None:
+    """Second-stage effect regression is unconstrained, so retain its estimates."""
+    x, treatment, outcome = _constant_outcome_by_arm()
+    spec = FeatureSpec(numerical=["signal"], categorical=[], excluded=[])
+    learner = learner_type(
+        spec=spec,
+        base_model=DummyClassifier(),
+        effect_model=_ControlledEffectRegressor("extrapolated"),
+        random_state=1,
+    ).fit(x, treatment, outcome)
+
+    np.testing.assert_allclose(learner.predict_uplift(x), 1.5)
