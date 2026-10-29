@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Callable
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -27,6 +29,74 @@ def test_outcome_by_treatment_has_two_arms(synthetic_data) -> None:  # type: ign
 def test_naive_average_treatment_effect_returns_float(synthetic_data) -> None:  # type: ignore[no-untyped-def]
     ate = naive_average_treatment_effect(synthetic_data)
     assert isinstance(ate, float)
+
+
+@pytest.mark.parametrize("invalid_label", [np.nan, 0.25, "treated", np.inf])
+@pytest.mark.parametrize("summarizer", [outcome_by_treatment, naive_average_treatment_effect])
+def test_treatment_outcomes_reject_invalid_assignments(
+    invalid_label: object, summarizer: Callable[[pd.DataFrame], pd.DataFrame | float]
+) -> None:
+    """No rows may be silently dropped from a descriptive or ATE estimate."""
+    data = pd.DataFrame({"treatment": [0, 1, invalid_label], "conversion": [0, 1, 1]})
+
+    with pytest.raises(ValueError, match="missing treatment assignments|binary 0/1"):
+        summarizer(data)
+
+
+@pytest.mark.parametrize(
+    "invalid_outcome", [np.nan, np.inf, -np.inf, "not_a_number", 1 + 2j]
+)
+@pytest.mark.parametrize("summarizer", [outcome_by_treatment, naive_average_treatment_effect])
+def test_treatment_outcomes_reject_nonfinite_or_nonnumeric_outcomes(
+    invalid_outcome: object, summarizer: Callable[[pd.DataFrame], pd.DataFrame | float]
+) -> None:
+    """Outcome means must never silently omit invalid observations."""
+    data = pd.DataFrame({"treatment": [0, 1, 0, 1], "conversion": [0, 1, invalid_outcome, 0]})
+
+    with pytest.raises(ValueError, match="outcome must contain"):
+        summarizer(data)
+
+
+def test_outcome_by_treatment_supports_single_arm_and_continuous_outcomes() -> None:
+    """Means can describe one arm; ATE still needs both assignment arms."""
+    data = pd.DataFrame({"treatment": [1, 1, 1], "conversion": [1.5, -0.5, 2.0]})
+
+    summary = outcome_by_treatment(data)
+
+    assert summary["treatment"].tolist() == [1]
+    assert summary["n"].tolist() == [3]
+    assert summary["outcome_rate"].tolist() == pytest.approx([1.0])
+    assert summary["positives"].tolist() == pytest.approx([3.0])
+    with pytest.raises(ValueError, match="Both treatment arms"):
+        naive_average_treatment_effect(data)
+
+
+def test_naive_average_treatment_effect_accepts_continuous_outcomes() -> None:
+    """Treatment effects are differences of means, not necessarily Bernoulli rates."""
+    data = pd.DataFrame({"assigned": [0, 1, 0, 1], "revenue": [0.0, 4.0, 2.0, 6.0]})
+
+    assert naive_average_treatment_effect(
+        data, treatment_col="assigned", outcome_col="revenue"
+    ) == pytest.approx(4.0)
+
+
+@pytest.mark.parametrize("summarizer", [outcome_by_treatment, naive_average_treatment_effect])
+def test_treatment_outcomes_reject_empty_data(
+    summarizer: Callable[[pd.DataFrame], pd.DataFrame | float],
+) -> None:
+    """No summary should advertise an estimate for an empty experiment."""
+    with pytest.raises(ValueError, match="data must not be empty"):
+        summarizer(pd.DataFrame(columns=["treatment", "conversion"]))
+
+
+def test_treatment_balance_table_preserves_missing_assignments() -> None:
+    """Raw assignment counts must remain useful for detecting missing labels."""
+    data = pd.DataFrame({"treatment": [0.0, 1.0, np.nan]})
+
+    balance = treatment_balance_table(data)
+
+    assert balance["n"].sum() == 3
+    assert balance["treatment"].isna().sum() == 1
 
 
 def test_validate_randomization_passes_for_balanced_data(synthetic_data) -> None:  # type: ignore[no-untyped-def]

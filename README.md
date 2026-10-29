@@ -178,7 +178,7 @@ paths = export_dashboard(
 | [`features`](src/uplift_marketing/features.py) | Feature spec inference and preprocessing |
 | [`models`](src/uplift_marketing/models.py) | `SLearner`, `TLearner`, `XLearner`, `DRLearner`, calibration |
 | [`uplift`](src/uplift_marketing/uplift.py) | Score attachment, deciles, subgroup uplift with CIs |
-| [`treatment`](src/uplift_marketing/treatment.py) | Naive ATE, balance tables, `validate_randomization` (SRM + SMD + null share) |
+| [`treatment`](src/uplift_marketing/treatment.py) | Naive ATE and outcome summaries (reject invalid assignments and non-finite outcomes), raw assignment counts, `validate_randomization` (SRM + SMD + null share) |
 | [`evaluation`](src/uplift_marketing/evaluation.py) | Qini / AUUC / normalized Qini, bootstrap policy & decile CIs |
 | [`policy`](src/uplift_marketing/policy.py) | Campaign segmentation and action mapping |
 | [`economics`](src/uplift_marketing/economics.py) | `CampaignEconomics`, `optimize_budget`, `scenario_table` |
