@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any, Sequence, cast
+from warnings import warn
 
 import numpy as np
 import pandas as pd
@@ -28,6 +29,28 @@ class FeatureSpec:
         """Return all feature columns before preprocessing."""
 
         return self.numerical + self.categorical
+
+
+def _validated_binary_indicator(
+    values: pd.Series | NDArray[Any], *, name: str, require_both: bool = False
+) -> NDArray[np.int64]:
+    """Return binary labels only after verifying the original observed values.
+
+    Checking before conversion prevents fractional assignments and NaN/Inf
+    values from being silently truncated or converted into valid labels.
+    """
+    raw = np.asarray(values)
+    if raw.ndim != 1:
+        raise ValueError(f"{name} must be one-dimensional")
+    try:
+        numeric = np.asarray(raw, dtype=float)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{name} must contain only binary 0/1 values") from exc
+    if not np.isfinite(numeric).all() or not np.isin(numeric, (0.0, 1.0)).all():
+        raise ValueError(f"{name} must contain only binary 0/1 values")
+    if require_both and set(np.unique(numeric)) != {0.0, 1.0}:
+        raise ValueError("Both treatment arms 0 and 1 are required")
+    return np.asarray(numeric, dtype=np.int64)
 
 
 def infer_feature_spec(
@@ -107,8 +130,16 @@ def split_features_treatment_outcome(
         raise ValueError(f"Missing columns required for modelling: {missing}")
 
     x = data[spec.feature_columns].copy()
-    treatment = data[treatment_col].astype(int)
-    outcome = data[outcome_col].astype(int)
+    treatment = pd.Series(
+        _validated_binary_indicator(data[treatment_col], name="treatment"),
+        index=data.index,
+        name=treatment_col,
+    )
+    outcome = pd.Series(
+        _validated_binary_indicator(data[outcome_col], name="outcome"),
+        index=data.index,
+        name=outcome_col,
+    )
     return x, treatment, outcome
 
 
@@ -128,7 +159,9 @@ def honest_train_test_split(
 
     - both arms appear in both train and test,
     - the treated share is preserved on both sides of the split,
-    - if an outcome is supplied, the conversion rate is preserved per arm.
+    - if an outcome is supplied and each treatment-outcome stratum is large
+      enough, the conversion rate is preserved per arm; otherwise a warning
+      is raised and stratification falls back to treatment alone.
 
     The function is a thin wrapper around :func:`sklearn.model_selection.train_test_split`
     whose name documents the intent. It returns the split arrays in the same
@@ -150,27 +183,60 @@ def honest_train_test_split(
         Seed for the underlying sklearn split.
     """
 
-    treatment_arr = np.asarray(treatment).astype(int)
-    if set(np.unique(treatment_arr)) - {0, 1}:
-        raise ValueError("treatment must be binary 0/1")
+    treatment_arr = _validated_binary_indicator(treatment, name="treatment", require_both=True)
+    if not arrays:
+        raise ValueError("At least one array to split is required")
+    if any(len(array) != len(treatment_arr) for array in arrays):
+        raise ValueError("All arrays and treatment must have the same length")
+    if not np.isfinite(test_size) or not 0 < test_size < 1:
+        raise ValueError("test_size must be a finite fraction in (0, 1)")
+
+    n_test = int(np.ceil(len(treatment_arr) * test_size))
+    n_train = len(treatment_arr) - n_test
+    if np.bincount(treatment_arr, minlength=2).min() < 2:
+        raise ValueError("Each treatment arm needs at least two observations for an honest split")
+    if min(n_train, n_test) < 2:
+        raise ValueError("Both train and test splits need at least two rows")
 
     if outcome is not None:
-        outcome_arr = np.asarray(outcome).astype(int)
+        outcome_arr = _validated_binary_indicator(outcome, name="outcome")
         if len(outcome_arr) != len(treatment_arr):
             raise ValueError("treatment and outcome must have the same length")
-        stratify = pd.Series(treatment_arr.astype(str)) + "_" + pd.Series(outcome_arr.astype(str))
-        stratify = stratify.to_numpy()
+        # The four possible treatment × outcome cells are encoded distinctly.
+        joint_labels = 2 * treatment_arr + outcome_arr
+        stratum_counts = np.bincount(joint_labels, minlength=4)
+        present_strata = stratum_counts[stratum_counts > 0]
+        if present_strata.min() >= 2 and min(n_train, n_test) >= len(present_strata):
+            stratify = joint_labels
+        else:
+            warn(
+                "Rare treatment-outcome strata prevent joint stratification; "
+                "using treatment-only stratification instead. Per-arm outcome "
+                "balance is not guaranteed.",
+                UserWarning,
+                stacklevel=2,
+            )
+            stratify = treatment_arr
     else:
         stratify = treatment_arr
 
-    # sklearn returns a list alternating train/test slices for each input.
-    # Cast the broad upstream stub to the input types preserved by the split.
-    return cast(
+    # Split treatment alongside the inputs to verify the advertised guarantee.
+    # sklearn returns alternating train/test slices for each input.
+    splits = cast(
         list[pd.DataFrame | pd.Series | NDArray[Any]],
         train_test_split(
             *arrays,
+            treatment_arr,
             test_size=test_size,
             random_state=random_state,
             stratify=stratify,
         ),
     )
+    train_treatment = np.asarray(splits[-2])
+    test_treatment = np.asarray(splits[-1])
+    if any(set(np.unique(labels)) != {0, 1} for labels in (train_treatment, test_treatment)):
+        raise ValueError(
+            "Both treatment arms must appear in train and test; "
+            "adjust test_size or collect more observations"
+        )
+    return splits[:-2]
