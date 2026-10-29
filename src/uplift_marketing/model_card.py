@@ -190,22 +190,11 @@ def build_model_card(
         )
 
     if feature_columns is None:
-        excluded = {treatment_col, outcome_col, uplift_col} | set(extra_excluded or [])
-        # Strip the columns the pipeline attaches downstream of feature
-        # modelling: scores from upstream estimators, propensity-style
-        # potential-outcome predictions, decile / segment labels, and the
-        # recommendation flag. ID-like columns are also dropped so the
-        # feature list reflects what the model actually trained on.
-        excluded |= {c for c in scored.columns if c.endswith("_score")}
-        excluded |= {c for c in scored.columns if c.endswith("_id") or c == "id"}
-        excluded |= {
-            "p_control",
-            "p_treated",
-            "uplift_decile",
-            "campaign_segment",
-            "in_recommendation",
-            "recommended_action",
-        }
+        # The reported feature list and the randomization balance table must
+        # use the same pre-treatment columns by default.
+        excluded = {treatment_col, outcome_col} | set(
+            _excluded_for_balance(scored, uplift_col, extra_excluded)
+        )
         feature_columns = [c for c in scored.columns if c not in excluded]
 
     return ModelCard(
@@ -247,10 +236,24 @@ def _excluded_for_balance(
     uplift_col: str,
     extra_excluded: list[str] | None,
 ) -> list[str]:
-    """Columns to keep out of the balance check (scores, IDs, derived labels)."""
+    """Exclude generated predictions, decisions and identifiers from baseline balance.
 
-    excluded = {uplift_col, "uplift_decile", "campaign_segment", "in_recommendation"}
+    Randomization diagnostics must compare only pre-treatment covariates.
+    Model-generated probabilities or contact decisions can depend on treatment
+    and must not be mistaken for evidence of a failed randomization.
+    """
+
+    excluded = {
+        uplift_col,
+        "p_control",
+        "p_treated",
+        "uplift_decile",
+        "campaign_segment",
+        "in_recommendation",
+        "recommended_action",
+    }
     excluded |= {c for c in scored.columns if c.endswith("_score")}
+    excluded |= {c for c in scored.columns if c.endswith("_id") or c == "id"}
     excluded |= set(extra_excluded or [])
     return sorted(excluded)
 

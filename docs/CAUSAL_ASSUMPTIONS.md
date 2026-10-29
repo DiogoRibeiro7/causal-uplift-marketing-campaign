@@ -14,6 +14,13 @@ available when there are no covariates, in which case the balance tables are
 empty. These diagnostics can identify problems with assignment or logging,
 but passing them does not prove that treatment was randomized.
 
+When `build_model_card` runs this check on a scored dataset, it automatically
+excludes predicted potential-outcome probabilities (`p_control`, `p_treated`),
+uplift scores, derived decile/segment and recommendation fields, and ID
+columns. These are not baseline covariates and could otherwise create
+misleading imbalance alarms. Genuine pre-treatment covariates are still
+checked; pass `extra_excluded` for other dataset-specific non-features.
+
 The Qini, cumulative uplift, and normalized Qini functions also require
 one-dimensional inputs with finite outcomes and scores, plus a fully
 observed treatment indicator containing both 0 and 1. Treatment values are

@@ -123,6 +123,49 @@ def test_model_card_flags_a_perfectly_separated_covariate() -> None:
     assert "+inf" in markdown
 
 
+def test_model_card_balance_ignores_model_outputs_and_identifiers() -> None:
+    """Derived predictions and contact decisions are not baseline covariates."""
+    scored = _scored_fixture(n=100)
+    assigned = scored["treatment"].to_numpy()
+    scored["assignment_proxy"] = assigned.astype(float)
+    # Deliberately make these *post-model* outputs treatment-dependent; they
+    # would produce false balance alarms if treated as original features.
+    scored["p_control"] = assigned.astype(float)
+    scored["p_treated"] = 1.0 - assigned
+    scored["uplift_decile"] = np.where(assigned == 1, 1, 10)
+    scored["campaign_segment"] = np.where(assigned == 1, "persuadable", "review")
+    scored["in_recommendation"] = assigned
+    scored["recommended_action"] = np.where(assigned == 1, "contact", "skip")
+    scored["session_id"] = np.arange(len(scored))
+
+    card = build_model_card(
+        scored,
+        economics=CampaignEconomics(cost_per_contact=0.1, value_per_conversion=20.0),
+    )
+
+    assert card.randomization is not None
+    balance_features = set(card.randomization.balance["feature"])
+    assert "assignment_proxy" in balance_features
+    assert "assignment_proxy" in set(card.randomization.imbalanced_features["feature"])
+    assert "feature_a" in balance_features
+    assert "feature_b_x" in balance_features
+    for derived_column in (
+        "customer_id",
+        "session_id",
+        "p_control",
+        "p_treated",
+        "uplift_decile",
+        "campaign_segment",
+        "in_recommendation",
+        "recommended_action",
+    ):
+        assert not any(
+            name == derived_column or name.startswith(f"{derived_column}_")
+            for name in balance_features
+        )
+    assert set(card.feature_columns) == {"feature_a", "feature_b", "assignment_proxy"}
+
+
 def test_model_card_rejects_missing_columns() -> None:
     scored = _scored_fixture().drop(columns=["uplift_score"])
     economics = CampaignEconomics(cost_per_contact=0.10, value_per_conversion=20.0)
