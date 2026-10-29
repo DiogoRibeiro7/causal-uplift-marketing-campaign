@@ -46,6 +46,11 @@ realised outcome of one randomly chosen contact list. The same convention is
 applied in policy bootstrap resamples; actual deployment must still resolve
 ties using an independent, reproducible random rule.
 
+Budget optimization and the dashboard's CRM target export both rank by
+numeric score values, even when those scores were loaded as strings from a
+CSV. The export uses the same stable row-position tie break as the optimizer
+so its `in_recommendation` flags match the selected contact budget.
+
 ## Uplift deciles with tied predictions
 
 Decile charts and bootstrap intervals also respect score ties. Quantile

@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import TypedDict
 
 import joblib
+import numpy as np
 import pandas as pd
 from sklearn.model_selection import train_test_split
 
@@ -148,10 +149,12 @@ def export_dashboard(
     # dict preserves first-seen order while removing duplicated column names.
     deduped = list(dict.fromkeys(target_columns))
 
-    # Match optimize_budget's stable tie ordering exactly. Otherwise an
-    # unstable sort can flag different customers from recommendation.targets
-    # when a tied-score block crosses the selected budget boundary.
-    targets_full = scored.sort_values(score_col, ascending=False, kind="mergesort").copy()
+    # Match optimize_budget's numeric, stable ranking by *row position*.
+    # Sorting the original object-typed column would place "9" before "10"
+    # lexicographically, flagging a different customer than the optimizer.
+    ranking_scores = scored[score_col].to_numpy(dtype=float)
+    ranked_positions = np.argsort(-ranking_scores, kind="mergesort")
+    targets_full = scored.iloc[ranked_positions].copy()
     # Select by ranked position, not score threshold: tied scores at the
     # boundary must not increase the budget or overstate the CRM target list.
     targets_full["in_recommendation"] = 0
