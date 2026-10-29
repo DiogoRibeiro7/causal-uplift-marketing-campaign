@@ -45,3 +45,12 @@ deterministic, row-order-invariant estimate for uniform tie-breaking, not the
 realised outcome of one randomly chosen contact list. The same convention is
 applied in policy bootstrap resamples; actual deployment must still resolve
 ties using an independent, reproducible random rule.
+
+## Uplift deciles with tied predictions
+
+Decile charts and bootstrap intervals also respect score ties. Quantile
+groups are formed from the predicted scores directly; customers with the
+same score remain in the same group. When predictions have too few distinct
+values, fewer than ten groups can be populated. The bootstrap table keeps
+the requested number of rows and reports unoccupied groups as `NaN` rather
+than inventing ordering information from dataframe row positions.

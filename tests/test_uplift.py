@@ -27,6 +27,51 @@ def test_make_uplift_deciles_assigns_one_through_ten() -> None:
     assert set(deciles.unique()) == set(range(1, 11))
 
 
+def test_make_uplift_deciles_preserves_score_ties_and_row_order_invariance() -> None:
+    data = pd.DataFrame({"uplift_score": [0.9] * 20 + [0.5] * 40 + [0.1] * 40})
+
+    original = make_uplift_deciles(data)
+    reordered = make_uplift_deciles(data.sample(frac=1.0, random_state=7))
+
+    pd.testing.assert_series_equal(original, reordered.sort_index())
+    assert set(original.unique()) == {1, 2, 3}
+    assert original.groupby(data["uplift_score"]).nunique().eq(1).all()
+    assert original.iloc[0] == 1  # Highest scores get the first occupied bin.
+
+
+def test_make_uplift_deciles_keeps_constant_scores_in_one_group() -> None:
+    data = pd.DataFrame({"uplift_score": [0.1] * 30})
+
+    assert set(make_uplift_deciles(data).unique()) == {1}
+    assert set(make_uplift_deciles(data, n_deciles=5).unique()) == {1}
+
+
+def test_make_uplift_deciles_supports_custom_bin_count() -> None:
+    data = pd.DataFrame({"uplift_score": np.arange(100, dtype=float)})
+
+    assert set(make_uplift_deciles(data, n_deciles=5).unique()) == {1, 2, 3, 4, 5}
+
+
+def test_make_uplift_deciles_accepts_numeric_scores_as_strings() -> None:
+    data = pd.DataFrame({"uplift_score": ["0.9", "0.5", "0.1"]})
+
+    assert make_uplift_deciles(data).tolist() == [1, 2, 3]
+
+
+@pytest.mark.parametrize("n_deciles", [0, 1, 3.5])
+def test_make_uplift_deciles_rejects_invalid_bin_count(n_deciles: int) -> None:
+    with pytest.raises(ValueError, match="n_deciles"):
+        make_uplift_deciles(pd.DataFrame({"uplift_score": [0.9, 0.1]}), n_deciles=n_deciles)
+
+
+@pytest.mark.parametrize("invalid", [np.nan, np.inf, -np.inf])
+def test_make_uplift_deciles_rejects_nonfinite_scores(invalid: float) -> None:
+    data = pd.DataFrame({"uplift_score": [0.3, invalid, 0.1]})
+
+    with pytest.raises(ValueError, match="finite"):
+        make_uplift_deciles(data)
+
+
 def test_uplift_by_group_returns_per_group_rows(synthetic_data) -> None:  # type: ignore[no-untyped-def]
     table = uplift_by_group(synthetic_data, group_col="device")
     assert {"device", "n", "treated_n", "control_n", "observed_uplift"}.issubset(table.columns)
