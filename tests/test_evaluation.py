@@ -3,6 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 import pytest
+from numpy.typing import NDArray
 
 from uplift_marketing.evaluation import (
     area_under_qini,
@@ -95,6 +96,55 @@ def test_qini_curves_reject_nonfinite_scores(invalid: float) -> None:
     for metric in (qini_curve, uplift_curve):
         with pytest.raises(ValueError, match="finite"):
             metric(outcome, treatment, scores)
+
+
+@pytest.mark.parametrize(
+    "invalid_treatment",
+    [
+        np.array([0.4, 1.8, 0.0, 1.0]),
+        np.array([0.0, 1.0, np.nan, 0.0]),
+        np.array([0.0, 1.0, np.inf, 0.0]),
+        np.array([-1.0, 1.0, 0.0, 1.0]),
+        np.array([0.0, 1.0, 2.0, 0.0]),
+    ],
+)
+def test_qini_metrics_reject_nonbinary_treatment(
+    invalid_treatment: NDArray[np.float64],
+) -> None:
+    """Fractional or non-finite assignments must not be truncated to 0/1."""
+    outcome = np.array([1, 0, 1, 0], dtype=int)
+    scores = np.array([0.9, 0.7, 0.6, 0.2])
+
+    for metric in (qini_curve, uplift_curve, normalized_qini):
+        with pytest.raises(ValueError, match="treatment must contain only binary 0/1"):
+            metric(outcome, invalid_treatment, scores)
+
+
+def test_qini_metrics_require_one_dimensional_inputs() -> None:
+    """Metrics should reject matrices instead of accidentally broadcasting them."""
+    outcome = np.array([1, 0, 1, 0], dtype=int)
+    treatment = np.array([1, 0, 1, 0], dtype=int)
+    scores = np.array([0.9, 0.7, 0.6, 0.2])
+
+    for metric in (qini_curve, uplift_curve, normalized_qini):
+        for malformed in (
+            (outcome.reshape(-1, 1), treatment, scores),
+            (outcome, treatment.reshape(-1, 1), scores),
+            (outcome, treatment, scores.reshape(-1, 1)),
+        ):
+            with pytest.raises(ValueError, match="one-dimensional"):
+                metric(*malformed)
+
+
+def test_qini_metrics_accept_binary_booleans_and_continuous_outcomes() -> None:
+    """Input checks preserve valid binary flags and finite monetary outcomes."""
+    treatment = np.array([True, False, True, False])
+    outcome = np.array([2.5, 0.0, 1.25, 0.5])
+    scores = np.array([0.9, 0.7, 0.6, 0.2])
+
+    assert np.isfinite(qini_curve(outcome, treatment, scores)["incremental_gain"]).all()
+    assert np.isfinite(uplift_curve(outcome, treatment, scores)["incremental_gain"]).all()
+    assert np.isfinite(normalized_qini(outcome, treatment, scores)["model_auc"])
 
 
 def test_policy_value_at_fraction_returns_summary(synthetic_data) -> None:  # type: ignore[no-untyped-def]

@@ -10,6 +10,48 @@ from numpy.typing import NDArray
 from sklearn.metrics import auc, roc_auc_score
 
 
+def _validate_curve_inputs(
+    outcome: NDArray[Any], treatment: NDArray[Any], uplift_score: NDArray[Any]
+) -> tuple[NDArray[np.float64], NDArray[np.int64], NDArray[np.float64]]:
+    """Validate aligned one-dimensional arrays before coercing treatment labels.
+
+    Outcomes may be continuous, but treatment must be a fully observed 0/1
+    indicator. Casting treatment to integers before checking its values would
+    silently turn fractional assignments into seemingly valid experiment arms.
+    """
+    raw_outcome = np.asarray(outcome)
+    raw_treatment = np.asarray(treatment)
+    raw_scores = np.asarray(uplift_score)
+
+    if any(array.ndim != 1 for array in (raw_outcome, raw_treatment, raw_scores)):
+        raise ValueError("outcome, treatment, and uplift_score must be one-dimensional")
+    if not (len(raw_outcome) == len(raw_treatment) == len(raw_scores)):
+        raise ValueError("outcome, treatment, and uplift_score must have the same length")
+
+    try:
+        numeric_treatment = np.asarray(raw_treatment, dtype=float)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("treatment must contain only binary 0/1 values") from exc
+    if (
+        not np.isfinite(numeric_treatment).all()
+        or not np.isin(numeric_treatment, (0.0, 1.0)).all()
+    ):
+        raise ValueError("treatment must contain only binary 0/1 values")
+    if set(np.unique(numeric_treatment)) != {0.0, 1.0}:
+        raise ValueError("Both treatment arms 0 and 1 are required")
+
+    numeric_outcome = np.asarray(raw_outcome, dtype=float)
+    numeric_scores = np.asarray(raw_scores, dtype=float)
+    if not np.isfinite(numeric_outcome).all() or not np.isfinite(numeric_scores).all():
+        raise ValueError("outcome and uplift_score must contain only finite values")
+
+    return (
+        np.asarray(numeric_outcome, dtype=np.float64),
+        np.asarray(numeric_treatment, dtype=np.int64),
+        np.asarray(numeric_scores, dtype=np.float64),
+    )
+
+
 def _interpolate_tied_gains(
     sorted_scores: NDArray[Any], cumulative_gain: NDArray[Any]
 ) -> NDArray[Any]:
@@ -81,16 +123,7 @@ def qini_curve(
     tie block should not be recomputed from those intermediate counts.
     """
 
-    outcome = np.asarray(outcome).astype(float)
-    treatment = np.asarray(treatment).astype(int)
-    uplift_score = np.asarray(uplift_score).astype(float)
-
-    if not (len(outcome) == len(treatment) == len(uplift_score)):
-        raise ValueError("outcome, treatment, and uplift_score must have the same length")
-    if set(np.unique(treatment)) != {0, 1}:
-        raise ValueError("Both treatment arms 0 and 1 are required")
-    if not np.isfinite(outcome).all() or not np.isfinite(uplift_score).all():
-        raise ValueError("outcome and uplift_score must contain only finite values")
+    outcome, treatment, uplift_score = _validate_curve_inputs(outcome, treatment, uplift_score)
 
     order = np.argsort(-uplift_score, kind="mergesort")
     y_sorted = outcome[order]
@@ -183,16 +216,7 @@ def uplift_curve(
     tied scores are interpolated to avoid artificial within-tie ranking.
     """
 
-    outcome = np.asarray(outcome).astype(float)
-    treatment = np.asarray(treatment).astype(int)
-    uplift_score = np.asarray(uplift_score).astype(float)
-
-    if not (len(outcome) == len(treatment) == len(uplift_score)):
-        raise ValueError("outcome, treatment, and uplift_score must have the same length")
-    if set(np.unique(treatment)) != {0, 1}:
-        raise ValueError("Both treatment arms 0 and 1 are required")
-    if not np.isfinite(outcome).all() or not np.isfinite(uplift_score).all():
-        raise ValueError("outcome and uplift_score must contain only finite values")
+    outcome, treatment, uplift_score = _validate_curve_inputs(outcome, treatment, uplift_score)
 
     order = np.argsort(-uplift_score, kind="mergesort")
     y_sorted = outcome[order]
@@ -261,9 +285,7 @@ def normalized_qini(
       this is what to quote when comparing models across datasets.
     """
 
-    outcome = np.asarray(outcome).astype(float)
-    treatment = np.asarray(treatment).astype(int)
-    uplift_score = np.asarray(uplift_score).astype(float)
+    outcome, treatment, uplift_score = _validate_curve_inputs(outcome, treatment, uplift_score)
 
     model_curve = qini_curve(outcome, treatment, uplift_score)
     model_auc = area_under_qini(model_curve)
