@@ -6,6 +6,14 @@ Uplift modelling relies on stronger assumptions than ordinary prediction.
 
 The cleanest setting is a randomized experiment where treatment and control groups are comparable before treatment.
 
+`validate_randomization` reports a sample-ratio mismatch (SRM) test and
+standardized mean differences for observed pre-treatment covariates. It
+requires fully observed binary assignment with both treatment arms present;
+missing assignments cannot be counted as controls. The SRM test remains
+available when there are no covariates, in which case the balance tables are
+empty. These diagnostics can identify problems with assignment or logging,
+but passing them does not prove that treatment was randomized.
+
 ## No leakage
 
 Features must be measured before campaign exposure. Variables created after treatment can leak outcome information or treatment effects.

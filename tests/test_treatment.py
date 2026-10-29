@@ -80,3 +80,75 @@ def test_validate_randomization_rejects_non_binary_treatment() -> None:
     )
     with pytest.raises(ValueError, match="binary 0/1"):
         validate_randomization(data)
+
+
+def test_validate_randomization_rejects_mixed_nonbinary_labels() -> None:
+    """Invalid mixed-type labels should raise a descriptive validation error."""
+    data = pd.DataFrame({"treatment": [0, "treated"], "conversion": [0, 1]})
+
+    with pytest.raises(ValueError, match="binary 0/1"):
+        validate_randomization(data)
+
+
+def test_validate_randomization_rejects_missing_assignments() -> None:
+    """Missing treatments must never be silently counted as controls in SRM."""
+    data = pd.DataFrame(
+        {
+            "treatment": [0.0, 1.0, np.nan, 1.0],
+            "conversion": [0, 1, 0, 0],
+            "feature": [0.2, 0.3, 0.4, 0.5],
+        }
+    )
+
+    with pytest.raises(ValueError, match="missing treatment assignments"):
+        validate_randomization(data)
+
+
+@pytest.mark.parametrize("arm", [0, 1])
+def test_validate_randomization_requires_both_arms(arm: int) -> None:
+    """Balance diagnostics require treated and control observations."""
+    data = pd.DataFrame(
+        {"treatment": [arm] * 6, "conversion": [0, 1] * 3, "feature": range(6)}
+    )
+
+    with pytest.raises(ValueError, match="Both treatment arms"):
+        validate_randomization(data)
+
+
+def test_validate_randomization_rejects_empty_data() -> None:
+    """An empty experiment cannot support an SRM test."""
+    data = pd.DataFrame(columns=["treatment", "conversion"])
+
+    with pytest.raises(ValueError, match="must not be empty"):
+        validate_randomization(data)
+
+
+@pytest.mark.parametrize("threshold", [-0.1, np.nan, np.inf])
+def test_validate_randomization_rejects_invalid_smd_threshold(threshold: float) -> None:
+    """Invalid thresholds must not mask covariate imbalance."""
+    data = pd.DataFrame({"treatment": [0, 1], "conversion": [0, 1], "feature": [1, 2]})
+
+    with pytest.raises(ValueError, match="smd_threshold"):
+        validate_randomization(data, smd_threshold=threshold)
+
+
+def test_validate_randomization_supports_no_covariates() -> None:
+    """The SRM diagnostic still applies when no feature columns are present."""
+    data = pd.DataFrame(
+        {"treatment": [0, 1, 0, 1], "conversion": [0, 0, 1, 1]}
+    )
+
+    report = validate_randomization(data)
+
+    assert report.observed_treated_share == pytest.approx(0.5)
+    assert report.sample_ratio_chi2 == pytest.approx(0.0)
+    assert report.balance.empty
+    assert report.imbalanced_features.empty
+    assert list(report.balance.columns) == [
+        "feature",
+        "mean_treated",
+        "mean_control",
+        "std_treated",
+        "std_control",
+        "smd",
+    ]
