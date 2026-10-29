@@ -21,6 +21,14 @@ validated before integer conversion, avoiding accidental reassignment of
 fractional or non-finite labels. Outcome values may be continuous when the
 analysis measures incremental amounts instead of binary conversions.
 
+Observed top-fraction policy estimates and decile bootstrap intervals likewise
+require fully observed 0/1 treatment assignments and finite numeric outcomes.
+They validate the entire evaluation set, including customers below a contact
+threshold, before computing rates or drawing bootstrap samples. Outcomes may
+be continuous. Bootstrap draws that happen to contain only one treatment arm
+are still marked as unidentifiable, whereas malformed original labels are
+rejected instead of silently excluded from a rate calculation.
+
 The modelling feature splitter and `honest_train_test_split` require observed
 binary treatment and conversion labels. They reject fractional and non-finite
 values before integer conversion. An honest split keeps both treatment arms

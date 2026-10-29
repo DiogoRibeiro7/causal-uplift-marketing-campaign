@@ -154,6 +154,56 @@ def test_policy_value_at_fraction_returns_summary(synthetic_data) -> None:  # ty
     assert summary["selected_n"] > 0
 
 
+@pytest.mark.parametrize("invalid", [0.5, 2.0, -1.0, np.nan, np.inf])
+def test_observed_policy_metrics_reject_nonbinary_treatment(invalid: float) -> None:
+    data = pd.DataFrame(
+        {
+            "uplift_score": np.linspace(1.0, 0.1, 8),
+            "treatment": [1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0, invalid],
+            "conversion": [1, 0, 0, 0, 1, 1, 0, 1],
+        }
+    )
+
+    # Invalid assignments must be rejected even when they rank below the
+    # policy threshold and are never directly used in the selected rates.
+    with pytest.raises(ValueError, match="treatment.*binary 0/1"):
+        policy_value_at_fraction(data, fraction=0.5)
+    with pytest.raises(ValueError, match="treatment.*binary 0/1"):
+        bootstrap_decile_uplift(data, n_deciles=2, n_boot=4)
+
+
+@pytest.mark.parametrize("invalid", [np.nan, np.inf, -np.inf])
+def test_observed_policy_metrics_reject_nonfinite_outcomes(invalid: float) -> None:
+    data = pd.DataFrame(
+        {
+            "uplift_score": np.linspace(1.0, 0.1, 8),
+            "treatment": [1, 0] * 4,
+            "conversion": [1.0, 0.0, 0.0, 0.0, 1.0, 1.0, 0.0, invalid],
+        }
+    )
+
+    with pytest.raises(ValueError, match="outcome.*finite"):
+        policy_value_at_fraction(data, fraction=0.5)
+    with pytest.raises(ValueError, match="outcome.*finite"):
+        bootstrap_decile_uplift(data, n_deciles=2, n_boot=4)
+
+
+def test_observed_policy_metrics_accept_numeric_string_labels() -> None:
+    treatment = np.tile(["1", "0"], 40)
+    outcomes = np.where(treatment == "1", 2.5, 0.5)
+    data = pd.DataFrame(
+        {"uplift_score": np.full(80, 0.4), "treatment": treatment, "conversion": outcomes}
+    )
+
+    policy = policy_value_at_fraction(data, fraction=0.25)
+    deciles = bootstrap_decile_uplift(data, n_deciles=2, n_boot=30, random_state=4)
+
+    assert policy["observed_uplift"] == pytest.approx(2.0)
+    assert policy["selected_n"] == 20.0
+    assert deciles.loc[0, "uplift_mean"] == pytest.approx(2.0)
+    assert deciles.loc[1, ["uplift_mean", "ci_low", "ci_high"]].isna().all()
+
+
 def test_policy_value_at_fraction_is_invariant_to_cutoff_tie_order() -> None:
     # Two of the three equal-score customers can be contacted, but there is
     # no defensible basis for preferring one of them by dataframe row order.

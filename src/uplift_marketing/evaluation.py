@@ -54,6 +54,38 @@ def _validate_curve_inputs(
     )
 
 
+def _validated_observed_labels(
+    data: pd.DataFrame, *, treatment_col: str, outcome_col: str
+) -> tuple[NDArray[np.int64], NDArray[np.float64]]:
+    """Validate observed policy labels, allowing one-arm bootstrap resamples.
+
+    Treatment must be a fully observed binary indicator. Finite outcomes may
+    be continuous, including monetary values, and are not truncated to 0/1.
+    Unlike curve metrics, policy resamples may contain only one arm; those
+    draws are subsequently marked as unidentifiable instead of rejected.
+    """
+
+    try:
+        treatment = data[treatment_col].to_numpy(dtype=float)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("treatment must contain only binary 0/1 values") from exc
+    if treatment.ndim != 1:
+        raise ValueError("treatment must be one-dimensional")
+    if not np.isfinite(treatment).all() or not np.isin(treatment, (0.0, 1.0)).all():
+        raise ValueError("treatment must contain only binary 0/1 values")
+
+    try:
+        outcomes = data[outcome_col].to_numpy(dtype=float)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("outcome must contain numeric finite values") from exc
+    if outcomes.ndim != 1:
+        raise ValueError("outcome must be one-dimensional")
+    if not np.isfinite(outcomes).all():
+        raise ValueError("outcome must contain only finite values")
+
+    return np.asarray(treatment, dtype=np.int64), np.asarray(outcomes, dtype=np.float64)
+
+
 def _interpolate_tied_gains(
     sorted_scores: NDArray[Any], cumulative_gain: NDArray[Any]
 ) -> NDArray[Any]:
@@ -188,6 +220,9 @@ def policy_value_at_fraction(
     scores = data[uplift_col].to_numpy(dtype=float)
     if not np.isfinite(scores).all():
         raise ValueError("uplift scores must be finite")
+    treatment, outcomes = _validated_observed_labels(
+        data, treatment_col=treatment_col, outcome_col=outcome_col
+    )
 
     # The cut-off score identifies the last customer the budget can cover.
     # When that score is tied, uniformly share the remaining budget across
@@ -200,8 +235,6 @@ def policy_value_at_fraction(
     weights = np.where(above_cutoff, 1.0, np.where(at_cutoff, tie_weight, 0.0))
 
     selected = weights > 0
-    treatment = data[treatment_col].to_numpy()
-    outcomes = data[outcome_col].to_numpy(dtype=float)
     treated = selected & (treatment == 1)
     control = selected & (treatment == 0)
 
@@ -504,13 +537,21 @@ def bootstrap_decile_uplift(
     # Validate the original scores before resampling, so bad observations
     # cannot be randomly missed in some bootstrap draws.
     make_uplift_deciles(data, uplift_col=uplift_col, n_deciles=n_deciles)
+    treatment, outcomes = _validated_observed_labels(
+        data, treatment_col=treatment_col, outcome_col=outcome_col
+    )
+    # Normalize numeric labels once; otherwise string-coded 0/1 assignments
+    # would be silently ignored by the arm comparisons inside each draw.
+    validated_data = data.copy()
+    validated_data[treatment_col] = treatment
+    validated_data[outcome_col] = outcomes
 
     rng = np.random.default_rng(random_state)
     n = len(data)
     boot = np.full((n_boot, n_deciles), np.nan, dtype=float)
     for i in range(n_boot):
         idx = rng.integers(0, n, size=n)
-        sample = data.iloc[idx].reset_index(drop=True)
+        sample = validated_data.iloc[idx].reset_index(drop=True)
         deciles = make_uplift_deciles(sample, uplift_col=uplift_col, n_deciles=n_deciles)
         sample = sample.assign(_decile=deciles)
         for d in range(1, n_deciles + 1):
