@@ -58,9 +58,46 @@ def test_x_learner_predicts_uplift(synthetic_data) -> None:  # type: ignore[no-u
     model = XLearner(spec=spec, random_state=1).fit(x_train, t_train, y_train)
     uplift = model.predict_uplift(x_test)
     assert len(uplift) == len(x_test)
-    # Default propensity 0.5 should match an explicit per-row propensity vector.
-    uplift_explicit = model.predict_uplift(x_test, propensity=np.full(len(x_test), 0.5))
+    # On a randomized sample, the default is the measured training allocation.
+    training_share = float(np.mean(t_train))
+    uplift_explicit = model.predict_uplift(
+        x_test, propensity=np.full(len(x_test), training_share)
+    )
     assert np.allclose(uplift, uplift_explicit)
+
+
+class _ArmSizeEffectRegressor(RegressorMixin, BaseEstimator):
+    """Produce distinguishable X-learner effects based on each arm's sample size."""
+
+    def fit(self, x: NDArray[Any], y: NDArray[Any]) -> _ArmSizeEffectRegressor:
+        """Use the arm's training share as a controlled prediction."""
+        self.effect_ = len(x) / 100.0
+        return self
+
+    def predict(self, x: NDArray[Any]) -> NDArray[np.float64]:
+        """Return one controlled effect prediction per customer."""
+        return np.full(len(x), self.effect_, dtype=float)
+
+
+def test_x_learner_uses_observed_randomization_rate_by_default() -> None:
+    """A 20/80 experiment must not blend arm-specific effect models 50/50."""
+    n_control, n_treated = 80, 20
+    x = pd.DataFrame({"signal": np.arange(n_control + n_treated, dtype=float)})
+    treatment = np.r_[np.zeros(n_control, dtype=int), np.ones(n_treated, dtype=int)]
+    outcome = np.zeros(len(x), dtype=int)
+    spec = FeatureSpec(numerical=["signal"], categorical=[], excluded=[])
+    model = XLearner(
+        spec=spec,
+        base_model=DummyClassifier(),
+        effect_model=_ArmSizeEffectRegressor(),
+    ).fit(x, treatment, outcome)
+
+    # tau_control = 0.8, tau_treated = 0.2. The documented blending formula
+    # weights tau_control by treatment propensity (0.2), yielding 0.32.
+    assert model.treatment_share_ == pytest.approx(0.2)
+    np.testing.assert_allclose(model.predict_uplift(x), 0.32)
+    np.testing.assert_allclose(model.predict_uplift(x, propensity=0.5), 0.5)
+    np.testing.assert_allclose(model.predict_uplift(x, propensity=np.full(len(x), 0.8)), 0.68)
 
 
 def test_make_calibrated_classifier_returns_calibrated_wrapper() -> None:

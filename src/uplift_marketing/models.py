@@ -329,9 +329,10 @@ class XLearner:
     3. Fit one regressor per arm to map features to those pseudo-effects, then
        blend the two regressors using a propensity weight ``g``.
 
-    For randomized data the propensity is constant and ``propensity`` defaults
-    to 0.5. For non-randomized data, pass an estimated propensity per row when
-    calling ``predict_uplift``.
+    For randomized data the propensity is constant. By default, predictions
+    use the observed treated share of the training sample, including in
+    unequally allocated experiments. For non-randomized data, pass an
+    estimated propensity per row when calling ``predict_uplift``.
     """
 
     spec: FeatureSpec
@@ -348,10 +349,12 @@ class XLearner:
         self.control_outcome_pipeline_: Pipeline | None = None
         self.treated_effect_pipeline_: Pipeline | None = None
         self.control_effect_pipeline_: Pipeline | None = None
+        self.treatment_share_: float | None = None
 
     def fit(self, x: pd.DataFrame, treatment: ArrayLike, y: ArrayLike) -> XLearner:
         """Fit the X-learner on randomized treatment/control data."""
 
+        self.treatment_share_ = None
         if len(x) != len(treatment) or len(x) != len(y):
             raise ValueError("x, treatment, and y must have the same length")
 
@@ -405,6 +408,9 @@ class XLearner:
         )
         self.treated_effect_pipeline_.fit(x_treated, d_treated)
         self.control_effect_pipeline_.fit(x_control, d_control)
+        # Under random assignment, the experimental treatment rate is the
+        # appropriate constant propensity for the X-learner's arm blend.
+        self.treatment_share_ = float(np.mean(treatment_array))
         return self
 
     def predict_potential_outcomes(self, x: pd.DataFrame) -> tuple[NDArray[Any], NDArray[Any]]:
@@ -426,7 +432,7 @@ class XLearner:
         self,
         x: pd.DataFrame,
         *,
-        propensity: float | NDArray[Any] = 0.5,
+        propensity: float | NDArray[Any] | None = None,
     ) -> NDArray[Any]:
         """Predict individual uplift scores using the blended effect models.
 
@@ -435,9 +441,10 @@ class XLearner:
         x:
             Feature frame.
         propensity:
-            Per-row probability of being treated. For randomized campaigns this
-            is constant (the experimental treatment share). The default of 0.5
-            matches the synthetic generator and a balanced A/B test.
+            Per-row probability of being treated. Defaults to the observed
+            treatment share from ``fit``, appropriate for randomized campaigns
+            with constant assignment probability. Pass a scalar or a per-row
+            propensity estimate explicitly for other assignment mechanisms.
         """
 
         if self.treated_effect_pipeline_ is None or self.control_effect_pipeline_ is None:
@@ -454,6 +461,10 @@ class XLearner:
             expected_length=len(x),
         )
 
+        if propensity is None:
+            if self.treatment_share_ is None:
+                raise RuntimeError("No fitted treatment share is available")
+            propensity = self.treatment_share_
         g = np.asarray(propensity, dtype=float)
         if g.ndim == 0:
             g = np.full(len(x), float(g))
