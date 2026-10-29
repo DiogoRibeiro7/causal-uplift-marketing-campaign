@@ -42,6 +42,13 @@ that supplied scalar or row-wise propensity blending weights are finite and
 in [0, 1]. These checks prevent invalid nuisance predictions from propagating
 into uplift scores and doubly robust pseudo-outcomes.
 
+The standalone `attach_uplift_scores` function applies the same [0, 1]
+probability-range and finite-value requirements to both supplied potential
+outcome vectors, including predictions from external models. It also requires
+one-dimensional, row-aligned inputs and prevents the uplift column from
+overwriting either probability column. A negative treated-minus-control
+effect is valid and is preserved as negative uplift.
+
 ## No leakage
 
 Features must be measured before campaign exposure. Variables created after treatment can leak outcome information or treatment effects.

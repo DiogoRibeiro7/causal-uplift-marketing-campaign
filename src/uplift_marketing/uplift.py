@@ -9,6 +9,32 @@ import pandas as pd
 from numpy.typing import NDArray
 
 
+def _validated_probability_vector(
+    values: NDArray[Any], *, name: str, expected_length: int
+) -> NDArray[np.float64]:
+    """Validate one row-aligned vector of potential-outcome probabilities.
+
+    The scoring boundary may also receive predictions from user-supplied
+    estimators, so it cannot assume the upstream model checked their range.
+    """
+
+    try:
+        probabilities = np.asarray(values, dtype=np.float64)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{name} must contain numeric probabilities") from exc
+
+    if probabilities.ndim != 1:
+        raise ValueError(f"{name} must be one-dimensional")
+    if len(probabilities) != expected_length:
+        raise ValueError(f"{name} must have the same length as data")
+    if not np.isfinite(probabilities).all():
+        raise ValueError(f"{name} probabilities must be finite")
+    if np.any((probabilities < 0.0) | (probabilities > 1.0)):
+        raise ValueError(f"{name} probabilities must be in [0, 1]")
+
+    return probabilities
+
+
 def attach_uplift_scores(
     data: pd.DataFrame,
     *,
@@ -16,14 +42,26 @@ def attach_uplift_scores(
     p_treated: NDArray[Any],
     uplift_col: str = "uplift_score",
 ) -> pd.DataFrame:
-    """Return data with potential outcome probabilities and uplift scores."""
+    """Return data with validated potential-outcome probabilities and uplift.
 
-    if len(data) != len(p_control) or len(data) != len(p_treated):
-        raise ValueError("data, p_control, and p_treated must have the same length")
+    Both probability inputs must be finite, one-dimensional, in [0, 1], and
+    aligned by row position with ``data``. Uplift is the treated probability
+    minus the control probability; negative effects remain negative.
+    """
+
+    if uplift_col in {"p_control", "p_treated"}:
+        raise ValueError("uplift_col must differ from p_control and p_treated")
+
+    control_prob = _validated_probability_vector(
+        p_control, name="p_control", expected_length=len(data)
+    )
+    treated_prob = _validated_probability_vector(
+        p_treated, name="p_treated", expected_length=len(data)
+    )
 
     scored = data.copy()
-    scored["p_control"] = np.asarray(p_control, dtype=float)
-    scored["p_treated"] = np.asarray(p_treated, dtype=float)
+    scored["p_control"] = control_prob
+    scored["p_treated"] = treated_prob
     scored[uplift_col] = scored["p_treated"] - scored["p_control"]
     return scored
 
