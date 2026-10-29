@@ -79,8 +79,9 @@ def export_dashboard(
     Produces a small set of files designed for direct ingestion into a BI
     tool or downstream CRM:
 
-    - ``recommended_targets.csv`` — customer-level table sorted by uplift
-      score, with the segment label and the recommended action joined in.
+    - ``recommended_targets.csv`` — customer-level table sorted by the
+      configured ranking score, with the segment label and the recommended
+      action joined in. The ranking and uplift columns are both retained.
       The selection count matches the profit-optimal budget under the
       supplied economics; exactly those rows carry
       ``in_recommendation = 1``, including when scores are tied or the
@@ -133,6 +134,7 @@ def export_dashboard(
     target_columns = ["customer_id"] if "customer_id" in scored.columns else []
     target_columns += [
         c for c in [
+            score_col,
             uplift_col,
             "uplift_decile",
             "campaign_segment",
@@ -146,7 +148,10 @@ def export_dashboard(
     # dict preserves first-seen order while removing duplicated column names.
     deduped = list(dict.fromkeys(target_columns))
 
-    targets_full = scored.sort_values(score_col, ascending=False).copy()
+    # Match optimize_budget's stable tie ordering exactly. Otherwise an
+    # unstable sort can flag different customers from recommendation.targets
+    # when a tied-score block crosses the selected budget boundary.
+    targets_full = scored.sort_values(score_col, ascending=False, kind="mergesort").copy()
     # Select by ranked position, not score threshold: tied scores at the
     # boundary must not increase the budget or overstate the CRM target list.
     targets_full["in_recommendation"] = 0
@@ -205,7 +210,11 @@ def export_dashboard(
     )
     summary = {
         "n_customers": int(len(scored)),
-        "naive_ate": float(naive_average_treatment_effect(scored)),
+        "naive_ate": float(
+            naive_average_treatment_effect(
+                scored, treatment_col=treatment_col, outcome_col=outcome_col
+            )
+        ),
         "auq": float(area_under_qini(qini)),
         "auuc": float(area_under_uplift(auuc)),
         "normalized_qini": norm,
@@ -380,7 +389,12 @@ def run_pipeline(
         uplift_score=scored["uplift_score"].to_numpy(),
     )
     auq = area_under_qini(qini)
-    policy_top_20 = policy_value_at_fraction(scored, fraction=0.20)
+    policy_top_20 = policy_value_at_fraction(
+        scored,
+        treatment_col=config.treatment_col,
+        outcome_col=config.outcome_col,
+        fraction=0.20,
+    )
 
     config.reports_dir.mkdir(parents=True, exist_ok=True)
     config.figures_dir.mkdir(parents=True, exist_ok=True)
@@ -395,9 +409,19 @@ def run_pipeline(
     save_csv(scored, scored_path)
     save_csv(campaign_action_table(scored), action_table_path)
     save_csv(qini, qini_path)
-    save_csv(outcome_by_treatment(data), treatment_summary_path)
     save_csv(
-        uplift_by_group(scored, group_col="uplift_decile"),
+        outcome_by_treatment(
+            data, treatment_col=config.treatment_col, outcome_col=config.outcome_col
+        ),
+        treatment_summary_path,
+    )
+    save_csv(
+        uplift_by_group(
+            scored,
+            group_col="uplift_decile",
+            treatment_col=config.treatment_col,
+            outcome_col=config.outcome_col,
+        ),
         config.reports_dir / "uplift_by_decile.csv",
     )
     joblib.dump(model, model_path)
@@ -422,7 +446,9 @@ def run_pipeline(
         "dashboard_dir": (config.reports_dir / "dashboard"),
         "recommended_targets_path": dashboard_paths["recommended_targets"],
         "model_summary_path": dashboard_paths["model_summary"],
-        "naive_ate": naive_average_treatment_effect(data),
+        "naive_ate": naive_average_treatment_effect(
+            data, treatment_col=config.treatment_col, outcome_col=config.outcome_col
+        ),
         "auq": auq,
         "top_20_observed_uplift": float(policy_top_20["observed_uplift"]),
     }

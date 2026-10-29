@@ -207,6 +207,13 @@ reports/dashboard/
     └── campaign_scenarios.png
 ```
 
+The CRM target export preserves the exact ranked customers selected by the
+budget optimizer, including when a budget cuts through equal ranking scores.
+It retains both the ranking column (`score_col`) and the estimated incremental
+effect (`uplift_col`), which can be different. Custom treatment and outcome
+column names are supported in both `export_dashboard` and the `ProjectConfig`
+used by `run_pipeline`.
+
 The model card and policy report are split deliberately: the report is
 the *decision* artifact ("what should we do, why, and how much will it
 move the needle?"), the model card is the *due-diligence* artifact
