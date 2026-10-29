@@ -78,9 +78,10 @@ def fig_qini_curve(
 ) -> Figure:
     """Qini curve: cumulative incremental conversions vs targeted fraction.
 
-    The diagonal is the random-targeting baseline; the model curve sitting
-    above it is what "the model has signal" looks like. ``area_under_qini``
-    integrates the difference between the two.
+    The diagonal is the no-skill reference; the model curve sitting above
+    it suggests useful ranking signal. Both curves start at zero contacts.
+    ``area_under_qini`` integrates the raw model curve, while normalized
+    Qini subtracts the diagonal reference area.
     """
 
     qini = qini_curve(
@@ -88,9 +89,9 @@ def fig_qini_curve(
         treatment=scored[treatment_col].to_numpy(),
         uplift_score=scored[uplift_col].to_numpy(),
     )
-    fraction = qini["population_fraction"].to_numpy()
-    incremental = qini["incremental_gain"].to_numpy()
-    final_gain = float(incremental[-1]) if len(incremental) else 0.0
+    fraction = np.r_[0.0, qini["population_fraction"].to_numpy()]
+    incremental = np.r_[0.0, qini["incremental_gain"].to_numpy()]
+    final_gain = float(incremental[-1])
     random_baseline = fraction * final_gain
 
     with _styled():
@@ -277,8 +278,8 @@ def fig_uplift_curve(
     with _styled():
         fig, ax = plt.subplots()
         ax.plot(
-            auc["population_fraction"],
-            auc["incremental_gain"],
+            np.r_[0.0, auc["population_fraction"].to_numpy()],
+            np.r_[0.0, auc["incremental_gain"].to_numpy()],
             color=PALETTE["primary"],
         )
         ax.axhline(0, color="black", linewidth=0.6)

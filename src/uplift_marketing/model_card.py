@@ -423,13 +423,14 @@ def _performance_section(card: ModelCard) -> list[str]:
         f"| Area under Qini (AUQ) | {card.auq:+.4f} | "
         "Cumulative incremental gain integrated over targeted fractions. |",
         f"| Area under uplift curve (AUUC) | {card.auuc:+.4f} | "
-        "Population-rescaled cousin of AUQ; comparable across sample sizes. |",
+        "Treatment-share-adjusted cumulative gain; scales with sample size. |",
         f"| Normalized Qini | {norm_str} | "
-        "AUQ scaled into `[0, 1]` against the in-sample oracle. |",
+        "AUQ relative to a signed-outcome reference; can be negative or above 1. |",
         "",
-        "A model with no signal scores near zero on AUUC and normalized Qini. "
-        "Quote these against bootstrap confidence intervals (see NB05) — point "
-        "estimates without CIs over-promise.",
+        "A model with no ranking signal has normalized Qini near zero, while "
+        "raw AUUC can remain nonzero when the population effect is nonzero. "
+        "Quote these against bootstrap confidence intervals (see NB05) — "
+        "point estimates without CIs over-promise.",
         "",
     ]
 

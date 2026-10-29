@@ -10,6 +10,51 @@ from numpy.typing import NDArray
 from sklearn.metrics import auc, roc_auc_score
 
 
+def _interpolate_tied_gains(
+    sorted_scores: NDArray[Any], cumulative_gain: NDArray[Any]
+) -> NDArray[Any]:
+    """Interpolate gains within tied-score blocks, preserving their endpoints.
+
+    Customers with identical predicted scores cannot be ranked relative to
+    each other. Interpolating between distinct score thresholds prevents the
+    original row order from creating artificial ranking performance.
+    """
+    n = len(sorted_scores)
+    boundaries = np.r_[np.flatnonzero(np.diff(sorted_scores) != 0) + 1, n]
+    return np.asarray(
+        np.interp(
+            np.arange(1, n + 1),
+            np.r_[0, boundaries],
+            np.r_[0.0, cumulative_gain[boundaries - 1]],
+        ),
+        dtype=float,
+    )
+
+
+def _area_from_zero(curve: pd.DataFrame) -> float:
+    """Integrate cumulative gains from the no-contact point (0, 0)."""
+    required = {"population_fraction", "incremental_gain"}
+    missing = required - set(curve.columns)
+    if missing:
+        raise ValueError(f"Missing columns: {sorted(missing)}")
+
+    x = curve["population_fraction"].to_numpy(dtype=float)
+    y = curve["incremental_gain"].to_numpy(dtype=float)
+    if not len(x) or not np.isfinite(x).all() or not np.isfinite(y).all():
+        raise ValueError("curve must contain finite population fractions and gains")
+    if x[0] < 0 or np.any(np.diff(x) <= 0):
+        raise ValueError("population_fraction must be strictly increasing from zero")
+    if x[0] == 0.0:
+        if y[0] != 0.0:
+            raise ValueError("the no-contact point must have zero gain")
+    else:
+        # Existing curve producers start at 1/N, so include the first
+        # trapezoid instead of integrating from that first customer onward.
+        x = np.r_[0.0, x]
+        y = np.r_[0.0, y]
+    return float(auc(x, y))
+
+
 def response_auc(y_true: NDArray[Any], y_score: NDArray[Any]) -> float:
     """Return ROC-AUC for a standard response model."""
 
@@ -30,7 +75,10 @@ def qini_curve(
 
     treated_conversions - control_conversions * treated_count / control_count
 
-    This implementation is intentionally transparent and suitable for teaching.
+    Gains within equal-score blocks are interpolated between their threshold
+    endpoints: a model cannot choose an order inside a tie. The integer arm
+    counts still describe one stable row order; interpolated gains within a
+    tie block should not be recomputed from those intermediate counts.
     """
 
     outcome = np.asarray(outcome).astype(float)
@@ -41,10 +89,13 @@ def qini_curve(
         raise ValueError("outcome, treatment, and uplift_score must have the same length")
     if set(np.unique(treatment)) != {0, 1}:
         raise ValueError("Both treatment arms 0 and 1 are required")
+    if not np.isfinite(outcome).all() or not np.isfinite(uplift_score).all():
+        raise ValueError("outcome and uplift_score must contain only finite values")
 
-    order = np.argsort(-uplift_score)
+    order = np.argsort(-uplift_score, kind="mergesort")
     y_sorted = outcome[order]
     t_sorted = treatment[order]
+    scores_sorted = uplift_score[order]
 
     treated_cum = np.cumsum(t_sorted == 1)
     control_cum = np.cumsum(t_sorted == 0)
@@ -54,6 +105,7 @@ def qini_curve(
     # Avoid division by zero at very early prefixes.
     safe_control = np.maximum(control_cum, 1)
     incremental_gain = treated_positive_cum - control_positive_cum * treated_cum / safe_control
+    incremental_gain = _interpolate_tied_gains(scores_sorted, incremental_gain)
 
     population_fraction = np.arange(1, len(outcome) + 1) / len(outcome)
     return pd.DataFrame(
@@ -67,14 +119,8 @@ def qini_curve(
 
 
 def area_under_qini(curve: pd.DataFrame) -> float:
-    """Approximate the area under a Qini-style curve."""
-
-    required = {"population_fraction", "incremental_gain"}
-    missing = required - set(curve.columns)
-    if missing:
-        raise ValueError(f"Missing columns: {sorted(missing)}")
-
-    return float(auc(curve["population_fraction"], curve["incremental_gain"]))
+    """Area under a Qini-style curve, including the no-contact origin."""
+    return _area_from_zero(curve)
 
 
 def policy_value_at_fraction(
@@ -133,7 +179,8 @@ def uplift_curve(
     allocation. At the full population, the gain is ``N`` times the
     observed treated-minus-control conversion-rate difference, measured
     in incremental conversions. It assumes random treatment assignment;
-    observational data require appropriate propensity adjustment.
+    observational data require appropriate propensity adjustment. Gains for
+    tied scores are interpolated to avoid artificial within-tie ranking.
     """
 
     outcome = np.asarray(outcome).astype(float)
@@ -144,10 +191,13 @@ def uplift_curve(
         raise ValueError("outcome, treatment, and uplift_score must have the same length")
     if set(np.unique(treatment)) != {0, 1}:
         raise ValueError("Both treatment arms 0 and 1 are required")
+    if not np.isfinite(outcome).all() or not np.isfinite(uplift_score).all():
+        raise ValueError("outcome and uplift_score must contain only finite values")
 
-    order = np.argsort(-uplift_score)
+    order = np.argsort(-uplift_score, kind="mergesort")
     y_sorted = outcome[order]
     t_sorted = treatment[order]
+    scores_sorted = uplift_score[order]
 
     treated_cum = np.cumsum(t_sorted == 1)
     control_cum = np.cumsum(t_sorted == 0)
@@ -164,6 +214,7 @@ def uplift_curve(
     incremental_gain = n_total * (
         treated_positive_cum / n_t - control_positive_cum / n_c
     )
+    incremental_gain = _interpolate_tied_gains(scores_sorted, incremental_gain)
     population_fraction = np.arange(1, len(outcome) + 1) / len(outcome)
 
     return pd.DataFrame(
@@ -179,13 +230,8 @@ def uplift_curve(
 
 
 def area_under_uplift(curve: pd.DataFrame) -> float:
-    """Approximate the area under an AUUC-style cumulative uplift curve."""
-
-    required = {"population_fraction", "incremental_gain"}
-    missing = required - set(curve.columns)
-    if missing:
-        raise ValueError(f"Missing columns: {sorted(missing)}")
-    return float(auc(curve["population_fraction"], curve["incremental_gain"]))
+    """Area under cumulative uplift, including the no-contact origin."""
+    return _area_from_zero(curve)
 
 
 def normalized_qini(
@@ -193,21 +239,24 @@ def normalized_qini(
     treatment: NDArray[Any],
     uplift_score: NDArray[Any],
 ) -> dict[str, float]:
-    """Return the area under the Qini curve normalized to ``[0, 1]``.
+    """Return a baseline-adjusted Qini score against an in-sample reference.
 
     Raw Qini AUC scales with population size and conversion rate, which makes
-    cross-dataset comparisons hard. Normalization divides by the *oracle*
-    AUC — the AUC achieved by ranking customers by their realised treated /
-    control conversions, i.e. by the best possible ranking on the same
-    sample. The score is bounded above by 1.0 (oracle) and equal to 0
-    when the model ranks no better than random.
+    cross-dataset comparisons hard. The reference ranking uses the realised
+    signed contribution of each treated/control outcome. It is an optimistic
+    *in-sample* benchmark, not a mathematical upper bound for the
+    prefix-dependent Qini formula. Scores can be negative or exceed 1.0;
+    a nondiscriminating constant-score model has value zero when a positive
+    reference denominator exists, and random rankings have expected score
+    close to zero across repeated samples.
 
     The dictionary returned contains:
 
     - ``model_auc`` — area under the Qini curve produced by ``uplift_score``;
-    - ``oracle_auc`` — area under the Qini curve when sorting by the
-      observed treated-control rate difference (an in-sample oracle);
-    - ``random_auc`` — expected AUC under uniform random ranking;
+    - ``oracle_auc`` — area under an optimistic signed-outcome ranking
+      (an in-sample reference, not a guaranteed upper bound);
+    - ``random_auc`` — the diagonal, no-skill baseline area. The finite-sample
+      expectation for a prefix-ratio Qini curve need not equal this exactly;
     - ``normalized`` — ``(model_auc - random_auc) / (oracle_auc - random_auc)``;
       this is what to quote when comparing models across datasets.
     """
@@ -219,15 +268,8 @@ def normalized_qini(
     model_curve = qini_curve(outcome, treatment, uplift_score)
     model_auc = area_under_qini(model_curve)
 
-    # Oracle: an in-sample upper bound on Qini achievable by any ranking.
-    # A customer's realised contribution to the Qini sum depends on
-    # treatment, outcome, and the running ratio of treated to control. The
-    # cleanest in-sample oracle is to sort by the customer's signed
-    # contribution to treated_positive minus control_positive after
-    # rebalancing — equivalent to sorting by ``y * (2t - 1)`` (treated
-    # positives first, control positives last) for a balanced experiment.
-    # We score by an unbiased per-row contribution and re-run qini_curve
-    # on those scores.
+    # Signed-outcome reference; sorting by additive, full-sample arm weights
+    # is optimistic but does not necessarily maximise prefix-ratio Qini.
     n_t = max(int((treatment == 1).sum()), 1)
     n_c = max(int((treatment == 0).sum()), 1)
     oracle_score = np.where(
@@ -238,8 +280,9 @@ def normalized_qini(
     oracle_curve = qini_curve(outcome, treatment, oracle_score)
     oracle_auc = area_under_qini(oracle_curve)
 
-    # Under uniform random ranking, the curve is the diagonal that goes from
-    # (0, 0) to (1, total_qini_gain). Its area is half the endpoint value.
+    # The no-skill *reference* is the diagonal between (0, 0) and the final
+    # gain. Its area is half the endpoint; it is not an exact finite-sample
+    # random-permutation expectation for the nonlinear prefix ratio.
     final_gain = float(model_curve["incremental_gain"].iloc[-1])
     random_auc = 0.5 * final_gain
 

@@ -28,7 +28,8 @@ a synthetic generator when the real data is unavailable.
   gap on rare-event data.
 - **Honest evaluation** — Qini, treatment-share-adjusted AUUC, normalized
   Qini, bootstrap CIs on policy value, decile stability, subgroup-level
-  uplift with CIs.
+  uplift with CIs. Qini/AUUC areas include the no-contact origin, and
+  tied scores receive neutral interpolation instead of arbitrary ordering.
 - **Profit-optimal targeting** — `CampaignEconomics`, `optimize_budget`
   (searches every possible top-k size by default, returning the cut-off
   score, customer list, and predicted economics;
@@ -212,6 +213,12 @@ move the needle?"), the model card is the *due-diligence* artifact
 ("what assumptions is every number contingent on, and how can it be
 misused?"). A deployment reviewer signs off the model card before the
 recommendation goes live.
+
+Normalized Qini is a ratio against an optimistic in-sample signed-outcome
+reference, not a probability. It can be negative or exceed 1, particularly
+for small or imbalanced experiments; zero is the no-skill baseline. Raw AUUC
+also scales with the number of customers, so do not compare its absolute
+value across datasets of different sizes.
 
 ## Causal assumptions and limitations
 

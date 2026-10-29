@@ -264,9 +264,9 @@ def _performance_section(report: PolicyReport, base_dir: Path | None) -> list[st
         f"| Area under Qini (AUQ) | {report.auq:+.4f} | "
         "Cumulative incremental gain integrated over targeted fractions. |",
         f"| Area under uplift curve (AUUC) | {report.auuc:+.4f} | "
-        "Population-rescaled cousin of AUQ. |",
+        "Treatment-share-adjusted cumulative gain; scales with sample size. |",
         f"| Normalized Qini | {norm_str} | "
-        "AUQ scaled into `[0, 1]` against the in-sample oracle. |",
+        "AUQ relative to a signed-outcome reference; can be negative or above 1. |",
         "",
         "Quote these against bootstrap confidence intervals "
         "(see NB05) — point estimates without CIs over-promise.",

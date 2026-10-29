@@ -36,6 +36,67 @@ def test_area_under_qini_returns_float(synthetic_data) -> None:  # type: ignore[
     assert isinstance(value, float)
 
 
+def test_curve_areas_include_zero_contact_origin() -> None:
+    # Trapezoids must cover [0, 1], including the first [0, 0.5] segment.
+    curve = pd.DataFrame(
+        {"population_fraction": [0.5, 1.0], "incremental_gain": [2.0, 4.0]}
+    )
+
+    assert area_under_qini(curve) == pytest.approx(2.0)
+    assert area_under_uplift(curve) == pytest.approx(2.0)
+
+
+def test_tied_scores_have_row_order_invariant_qini_and_uplift_curves() -> None:
+    outcome = np.array([1, 0, 0, 1, 1, 0], dtype=int)
+    treatment = np.array([1, 1, 0, 0, 1, 0], dtype=int)
+    equal_scores = np.zeros(len(outcome), dtype=float)
+
+    for metric in (qini_curve, uplift_curve):
+        original = metric(outcome, treatment, equal_scores)
+        reversed_rows = metric(outcome[::-1], treatment[::-1], equal_scores)
+
+        np.testing.assert_allclose(original["incremental_gain"], reversed_rows["incremental_gain"])
+        # A constant ranking cannot distinguish customers: the neutral curve
+        # connects the no-contact point to the observed full-sample effect.
+        expected = np.linspace(0.0, float(original["incremental_gain"].iloc[-1]), 7)[1:]
+        np.testing.assert_allclose(original["incremental_gain"], expected)
+
+
+def test_constant_scores_have_zero_normalized_qini() -> None:
+    outcome = np.array([1, 0, 0, 1, 1, 0], dtype=int)
+    treatment = np.array([1, 1, 0, 0, 1, 0], dtype=int)
+
+    result = normalized_qini(outcome, treatment, np.zeros(len(outcome)))
+
+    assert np.isfinite(result["normalized"])
+    assert result["model_auc"] == pytest.approx(result["random_auc"])
+    assert result["normalized"] == pytest.approx(0.0)
+
+
+def test_qini_reference_is_not_a_strict_upper_bound() -> None:
+    # With severe arm imbalance, prefix-dependent scaling means the
+    # signed-outcome reference need not maximise Qini area.
+    treatment = np.array([1, 0, 0, 0, 0, 0], dtype=int)
+    outcome = np.array([0, 1, 1, 0, 0, 0], dtype=int)
+    scores = np.array([1.0, 6.0, 5.0, 4.0, 3.0, 2.0])
+
+    result = normalized_qini(outcome, treatment, scores)
+
+    assert result["model_auc"] > result["oracle_auc"]
+    assert result["normalized"] > 1.0  # Documented, never clip silently.
+
+
+@pytest.mark.parametrize("invalid", [np.nan, np.inf])
+def test_qini_curves_reject_nonfinite_scores(invalid: float) -> None:
+    outcome = np.array([1, 0, 1, 0], dtype=int)
+    treatment = np.array([1, 0, 0, 1], dtype=int)
+    scores = np.array([0.5, invalid, 0.2, 0.1])
+
+    for metric in (qini_curve, uplift_curve):
+        with pytest.raises(ValueError, match="finite"):
+            metric(outcome, treatment, scores)
+
+
 def test_policy_value_at_fraction_returns_summary(synthetic_data) -> None:  # type: ignore[no-untyped-def]
     data = synthetic_data.assign(uplift_score=synthetic_data["discount_affinity"])
     summary = policy_value_at_fraction(data, fraction=0.2)
@@ -82,7 +143,7 @@ def test_uplift_curve_uses_conversion_rates_not_raw_counts() -> None:
     assert curve["incremental_gain"].iloc[-1] == pytest.approx(1.5)
 
 
-def test_normalized_qini_bounded_below_oracle(synthetic_data) -> None:  # type: ignore[no-untyped-def]
+def test_normalized_qini_reports_reference_adjusted_score(synthetic_data) -> None:  # type: ignore[no-untyped-def]
     rng = np.random.default_rng(0)
     nq = normalized_qini(
         outcome=synthetic_data["conversion"].to_numpy(),
@@ -90,11 +151,30 @@ def test_normalized_qini_bounded_below_oracle(synthetic_data) -> None:  # type: 
         uplift_score=rng.uniform(size=len(synthetic_data)),
     )
     assert {"model_auc", "oracle_auc", "random_auc", "normalized"} <= set(nq)
-    # An oracle ranks at or above any other ranking; the normalized score
-    # against random should be near 0 for a random ranker and at most 1
-    # for the oracle.
-    assert nq["oracle_auc"] >= nq["model_auc"] - 1e-9
-    assert nq["normalized"] <= 1.0 + 1e-9
+    assert nq["oracle_auc"] > nq["random_auc"]
+    assert nq["normalized"] == pytest.approx(
+        (nq["model_auc"] - nq["random_auc"])
+        / (nq["oracle_auc"] - nq["random_auc"])
+    )
+
+
+def test_curve_area_accepts_explicit_zero_origin() -> None:
+    curve = pd.DataFrame(
+        {"population_fraction": [0.0, 0.5, 1.0], "incremental_gain": [0.0, 2.0, 4.0]}
+    )
+    assert area_under_qini(curve) == pytest.approx(2.0)
+    assert area_under_uplift(curve) == pytest.approx(2.0)
+
+
+def test_curve_area_rejects_missing_or_invalid_points() -> None:
+    with pytest.raises(ValueError, match="finite"):
+        area_under_qini(pd.DataFrame(columns=["population_fraction", "incremental_gain"]))
+    with pytest.raises(ValueError, match="strictly increasing"):
+        area_under_uplift(
+            pd.DataFrame(
+                {"population_fraction": [0.5, 0.2], "incremental_gain": [1.0, 2.0]}
+            )
+        )
 
 
 def test_bootstrap_policy_value_excludes_zero_for_clear_signal(synthetic_data) -> None:  # type: ignore[no-untyped-def]
