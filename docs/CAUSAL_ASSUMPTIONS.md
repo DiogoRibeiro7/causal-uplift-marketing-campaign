@@ -35,6 +35,13 @@ and cross-fitting requires at least as many observations per arm as folds.
 Validation is performed before integer conversion, including for OOF uplift
 predictions, so malformed labels cannot silently change the learned effects.
 
+Classifier-derived potential outcomes and nuisance propensity estimates must
+be finite, valid probability distributions: each probability is in [0, 1] and
+each row sums to one (within numerical tolerance). The X-learner also checks
+that supplied scalar or row-wise propensity blending weights are finite and
+in [0, 1]. These checks prevent invalid nuisance predictions from propagating
+into uplift scores and doubly robust pseudo-outcomes.
+
 ## No leakage
 
 Features must be measured before campaign exposure. Variables created after treatment can leak outcome information or treatment effects.

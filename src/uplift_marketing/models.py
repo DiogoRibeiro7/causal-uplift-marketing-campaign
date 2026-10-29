@@ -71,6 +71,14 @@ def _positive_class_probability(model: BaseEstimator, x: pd.DataFrame) -> NDArra
         raise ValueError("predict_proba must return a two-dimensional array")
     if probabilities.shape[0] != len(x):
         raise ValueError("predict_proba must return one probability row per sample")
+    if not np.isfinite(probabilities).all():
+        raise ValueError("predict_proba must return only finite probabilities")
+    if np.any((probabilities < 0.0) | (probabilities > 1.0)):
+        raise ValueError("predict_proba probabilities must lie in [0, 1]")
+    # A probability distribution has unit mass on every row, including when
+    # a training fold contains only one observed outcome class.
+    if not np.allclose(probabilities.sum(axis=1), 1.0, rtol=0.0, atol=1e-8):
+        raise ValueError("predict_proba probability rows must sum to one")
 
     raw_classes = getattr(model, "classes_", None)
     if raw_classes is None:
@@ -406,6 +414,8 @@ class XLearner:
             g = np.full(len(x), float(g))
         if g.shape != (len(x),):
             raise ValueError("propensity must be a scalar or have one value per row")
+        if not np.isfinite(g).all():
+            raise ValueError("propensity must contain only finite values")
         if np.any((g < 0) | (g > 1)):
             raise ValueError("propensity must be in [0, 1]")
 
