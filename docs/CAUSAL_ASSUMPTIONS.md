@@ -14,6 +14,13 @@ available when there are no covariates, in which case the balance tables are
 empty. These diagnostics can identify problems with assignment or logging,
 but passing them does not prove that treatment was randomized.
 
+The Qini, cumulative uplift, and normalized Qini functions also require
+one-dimensional inputs with finite outcomes and scores, plus a fully
+observed treatment indicator containing both 0 and 1. Treatment values are
+validated before integer conversion, avoiding accidental reassignment of
+fractional or non-finite labels. Outcome values may be continuous when the
+analysis measures incremental amounts instead of binary conversions.
+
 ## No leakage
 
 Features must be measured before campaign exposure. Variables created after treatment can leak outcome information or treatment effects.
