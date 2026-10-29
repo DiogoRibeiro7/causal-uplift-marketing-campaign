@@ -154,6 +154,57 @@ def test_policy_value_at_fraction_returns_summary(synthetic_data) -> None:  # ty
     assert summary["selected_n"] > 0
 
 
+def test_policy_value_at_fraction_is_invariant_to_cutoff_tie_order() -> None:
+    # Two of the three equal-score customers can be contacted, but there is
+    # no defensible basis for preferring one of them by dataframe row order.
+    data = pd.DataFrame(
+        {
+            "uplift_score": [1.0, 0.5, 0.5, 0.5, 0.0, 0.0],
+            "treatment": [1, 0, 1, 0, 1, 0],
+            "conversion": [1, 0, 0, 1, 1, 0],
+        }
+    )
+
+    original = policy_value_at_fraction(data, fraction=0.5)
+    shuffled = policy_value_at_fraction(data.iloc[[3, 5, 2, 0, 4, 1]], fraction=0.5)
+
+    assert original == pytest.approx(shuffled)
+    assert original["selected_n"] == 3.0
+    # Customer 0 gets weight 1; each of the three tied customers gets 2/3.
+    assert original["treated_rate"] == pytest.approx(3.0 / 5.0)
+    assert original["control_rate"] == pytest.approx(0.5)
+    assert original["observed_uplift"] == pytest.approx(0.1)
+
+
+def test_policy_value_at_fraction_uses_neutral_selection_for_constant_scores() -> None:
+    data = pd.DataFrame(
+        {
+            "uplift_score": [0.1] * 6,
+            "treatment": [1, 0, 1, 0, 1, 0],
+            "conversion": [1, 0, 0, 1, 1, 0],
+        }
+    )
+
+    result = policy_value_at_fraction(data, fraction=1.0 / 3.0)
+
+    assert result["selected_n"] == 2.0
+    assert result["observed_uplift"] == pytest.approx(1.0 / 3.0)
+
+
+@pytest.mark.parametrize("invalid", [np.nan, np.inf, -np.inf])
+def test_policy_value_at_fraction_rejects_nonfinite_scores(invalid: float) -> None:
+    data = pd.DataFrame(
+        {
+            "uplift_score": [0.9, invalid, 0.2, 0.1],
+            "treatment": [1, 0, 1, 0],
+            "conversion": [1, 0, 0, 1],
+        }
+    )
+
+    with pytest.raises(ValueError, match="uplift scores must be finite"):
+        policy_value_at_fraction(data, fraction=0.5)
+
+
 def test_uplift_curve_terminates_at_total_gain(synthetic_data) -> None:  # type: ignore[no-untyped-def]
     curve = uplift_curve(
         outcome=synthetic_data["conversion"].to_numpy(),

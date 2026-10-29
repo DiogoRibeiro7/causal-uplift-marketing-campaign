@@ -167,7 +167,10 @@ def policy_value_at_fraction(
     """Estimate observed campaign value for the top uplift fraction.
 
     The result is a descriptive policy diagnostic based on observed outcomes in
-    treated and control users inside the selected segment.
+    treated and control users inside the selected segment. Customers tied at
+    the contact-budget cutoff receive equal fractional selection weights,
+    avoiding arbitrary decisions based on dataframe row order. The weights
+    sum to ``ceil(N * fraction)``; rates use weighted treated/control means.
     """
 
     if not 0 < fraction <= 1:
@@ -176,18 +179,44 @@ def policy_value_at_fraction(
     missing = [column for column in [uplift_col, treatment_col, outcome_col] if column not in data]
     if missing:
         raise ValueError(f"Missing columns: {missing}")
+    if data.empty:
+        raise ValueError("data must not be empty")
 
     n_selected = max(1, int(np.ceil(len(data) * fraction)))
-    selected = data.sort_values(uplift_col, ascending=False).head(n_selected)
-    treated = selected[selected[treatment_col] == 1]
-    control = selected[selected[treatment_col] == 0]
+    scores = data[uplift_col].to_numpy(dtype=float)
+    if not np.isfinite(scores).all():
+        raise ValueError("uplift scores must be finite")
 
-    treated_rate = float(treated[outcome_col].mean()) if len(treated) else np.nan
-    control_rate = float(control[outcome_col].mean()) if len(control) else np.nan
+    # The cut-off score identifies the last customer the budget can cover.
+    # When that score is tied, uniformly share the remaining budget across
+    # the entire tie block rather than using the input row order as a ranking.
+    cutoff = float(np.partition(scores, len(scores) - n_selected)[len(scores) - n_selected])
+    above_cutoff = scores > cutoff
+    at_cutoff = scores == cutoff
+    remaining = n_selected - int(np.count_nonzero(above_cutoff))
+    tie_weight = remaining / int(np.count_nonzero(at_cutoff))
+    weights = np.where(above_cutoff, 1.0, np.where(at_cutoff, tie_weight, 0.0))
+
+    selected = weights > 0
+    treatment = data[treatment_col].to_numpy()
+    outcomes = data[outcome_col].to_numpy(dtype=float)
+    treated = selected & (treatment == 1)
+    control = selected & (treatment == 0)
+
+    treated_rate = (
+        float(np.average(outcomes[treated], weights=weights[treated]))
+        if treated.any()
+        else np.nan
+    )
+    control_rate = (
+        float(np.average(outcomes[control], weights=weights[control]))
+        if control.any()
+        else np.nan
+    )
 
     return {
         "fraction": fraction,
-        "selected_n": float(len(selected)),
+        "selected_n": float(n_selected),
         "treated_rate": treated_rate,
         "control_rate": control_rate,
         "observed_uplift": treated_rate - control_rate,
