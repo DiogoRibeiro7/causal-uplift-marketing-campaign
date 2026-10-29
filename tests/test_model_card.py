@@ -106,6 +106,23 @@ def test_model_card_markdown_contains_required_sections() -> None:
         assert risk in md, f"misuse-risk fragment missing: {risk}"
 
 
+def test_model_card_flags_a_perfectly_separated_covariate() -> None:
+    """A fully confounded feature should be visible in the published model card."""
+    scored = _scored_fixture()
+    scored["assignment_proxy"] = scored["treatment"].astype(float)
+
+    card = build_model_card(
+        scored,
+        economics=CampaignEconomics(cost_per_contact=0.1, value_per_conversion=20.0),
+    )
+
+    assert card.randomization is not None
+    assert "assignment_proxy" in set(card.randomization.imbalanced_features["feature"])
+    markdown = card.to_markdown()
+    assert "`assignment_proxy`" in markdown
+    assert "+inf" in markdown
+
+
 def test_model_card_rejects_missing_columns() -> None:
     scored = _scored_fixture().drop(columns=["uplift_score"])
     economics = CampaignEconomics(cost_per_contact=0.10, value_per_conversion=20.0)

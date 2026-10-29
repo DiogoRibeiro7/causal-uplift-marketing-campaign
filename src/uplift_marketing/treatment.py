@@ -127,6 +127,9 @@ class RandomizationReport:
     balance:
         Per-feature standardized mean difference between treated and control,
         with the means and (sample) standard deviations used to compute it.
+        When pooled variance is zero, identical arm means yield zero SMD;
+        different arm means yield signed infinity and are flagged as imbalanced.
+        Missing or undefined arm moments retain NaN SMD.
     imbalanced_features:
         Subset of `balance` whose ``|smd|`` exceeds `smd_threshold`.
     null_share:
@@ -162,7 +165,9 @@ def validate_randomization(
        rather than a real effect.
     2. **Covariate balance.** Standardized mean difference (SMD) per numeric
        feature; categorical features are one-hot expanded so each level gets
-       its own SMD. Conventionally ``|SMD| > 0.10`` flags imbalance.
+       its own SMD. Conventionally ``|SMD| > 0.10`` flags imbalance. Constant
+       features with different arm means have infinite SMD and are flagged,
+       while identical constants have zero SMD.
     3. **Missingness.** Share of nulls per column, since downstream feature
        inference assumes complete cases by default.
 
@@ -223,7 +228,15 @@ def validate_randomization(
         vt = float(treated_values.var(ddof=1)) if len(treated_values) > 1 else 0.0
         vc = float(control_values.var(ddof=1)) if len(control_values) > 1 else 0.0
         pooled = float(np.sqrt((vt + vc) / 2.0))
-        smd = (mt - mc) / pooled if pooled > 0 else float("nan")
+        if not np.isfinite(mt) or not np.isfinite(mc) or not np.isfinite(pooled):
+            # Missing arm-level moments cannot support a balance estimate.
+            smd = float("nan")
+        elif pooled == 0:
+            # With no within-arm variation, separation is complete when the
+            # means differ. NaN would hide this covariate from the alert table.
+            smd = 0.0 if mt == mc else float(np.copysign(np.inf, mt - mc))
+        else:
+            smd = (mt - mc) / pooled
         rows.append(
             {
                 "feature": column,
