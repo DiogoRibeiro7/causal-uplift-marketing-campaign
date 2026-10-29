@@ -155,7 +155,8 @@ def optimize_budget(
         Column used to rank customers for selection. Defaults to the
         ``uplift_score`` produced upstream; pass a different name to compare
         a response-targeted policy against an uplift-targeted one with the
-        same economics.
+        same economics. Ranking is numeric even if the input column has
+        string/object dtype, provided its values are numeric and finite.
     uplift_col:
         Column whose sum over the selected rows is taken as the predicted
         incremental conversions. Defaults to ``uplift_score``.
@@ -169,6 +170,8 @@ def optimize_budget(
     missing = [c for c in (score_col, uplift_col) if c not in scored.columns]
     if missing:
         raise ValueError(f"Missing columns: {missing}")
+    if scored.empty:
+        raise ValueError("scored must contain at least one customer")
 
     exact_search = fractions is None
     if exact_search:
@@ -182,13 +185,22 @@ def optimize_budget(
     ):
         raise ValueError("fractions must be a non-empty 1D grid in (0, 1]")
 
-    # A stable sort keeps ties deterministic; one cumulative sum avoids
-    # re-sorting and re-summing the customer base at each candidate budget.
-    ranked = scored.sort_values(score_col, ascending=False, kind="mergesort")
-    sorted_scores = ranked[score_col].to_numpy(dtype=float)
-    sorted_uplift = ranked[uplift_col].to_numpy(dtype=float)
-    if not np.isfinite(sorted_scores).all() or not np.isfinite(sorted_uplift).all():
-        raise ValueError("score and uplift columns must contain only finite values")
+    # Convert *before* sorting: object-typed numeric scores would otherwise
+    # sort lexicographically ("9" before "10"), changing budget decisions.
+    try:
+        ranking_scores = scored[score_col].to_numpy(dtype=float)
+        predicted_uplift = scored[uplift_col].to_numpy(dtype=float)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError("score and uplift columns must contain numeric finite values") from exc
+    if not np.isfinite(ranking_scores).all() or not np.isfinite(predicted_uplift).all():
+        raise ValueError("score and uplift columns must contain numeric finite values")
+
+    # Stable numeric ordering retains the documented input-order tie break;
+    # iloc keeps the selected customer rows and their original identifiers.
+    order = np.argsort(-ranking_scores, kind="mergesort")
+    ranked = scored.iloc[order]
+    sorted_scores = ranking_scores[order]
+    sorted_uplift = predicted_uplift[order]
 
     n_total = len(ranked)
     cumulative_uplift = np.cumsum(sorted_uplift)

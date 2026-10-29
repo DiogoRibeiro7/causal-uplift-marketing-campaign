@@ -164,6 +164,53 @@ def test_default_budget_optimization_breaks_score_ties_by_input_order() -> None:
     assert recommendation.targets.index.tolist() == [15]
 
 
+def test_optimize_budget_ranks_numeric_strings_by_numeric_value() -> None:
+    """Object-typed scores must not induce lexicographic policy decisions."""
+    scored = pd.DataFrame(
+        {
+            "customer_id": [2, 10, 9],
+            "ranking_score": ["2", "10", "9"],
+            "uplift_score": ["0.4", "0.1", "-0.2"],
+        }
+    )
+    economics = CampaignEconomics(cost_per_contact=0.0, value_per_conversion=1.0)
+
+    recommendation = optimize_budget(
+        scored, economics, score_col="ranking_score", fractions=np.array([1 / 3])
+    )
+
+    assert recommendation.n_selected == 1
+    assert recommendation.threshold_score == pytest.approx(10.0)
+    assert recommendation.targets["customer_id"].tolist() == [10]
+    assert recommendation.predicted_incremental_conversions == pytest.approx(0.1)
+    assert recommendation.predicted_net_profit == pytest.approx(0.1)
+
+
+@pytest.mark.parametrize("invalid_column", ["ranking_score", "uplift_score"])
+def test_optimize_budget_rejects_nonnumeric_scores(invalid_column: str) -> None:
+    """Malformed score data should fail before sorting or computing profits."""
+    scored = pd.DataFrame(
+        {"ranking_score": ["1.0", "0.5"], "uplift_score": ["0.1", "0.2"]}
+    )
+    scored.loc[1, invalid_column] = "invalid"
+    economics = CampaignEconomics(cost_per_contact=0.0, value_per_conversion=1.0)
+
+    with pytest.raises(ValueError, match="numeric finite values"):
+        optimize_budget(scored, economics, score_col="ranking_score")
+
+
+@pytest.mark.parametrize("fractions", [None, np.array([0.5, 1.0])])
+def test_optimize_budget_rejects_empty_customer_base(
+    fractions: np.ndarray | None,
+) -> None:
+    """An empty campaign cannot support an optimal contact recommendation."""
+    scored = pd.DataFrame(columns=["uplift_score"])
+    economics = CampaignEconomics(cost_per_contact=0.0, value_per_conversion=1.0)
+
+    with pytest.raises(ValueError, match="at least one customer"):
+        optimize_budget(scored, economics, fractions=fractions)
+
+
 @pytest.mark.parametrize("invalid", [np.nan, np.inf])
 def test_optimize_budget_rejects_nonfinite_scores(invalid: float) -> None:
     economics = CampaignEconomics(cost_per_contact=0.05, value_per_conversion=1.0)
