@@ -77,6 +77,13 @@ that supplied scalar or row-wise propensity blending weights are finite and
 in [0, 1]. These checks prevent invalid nuisance predictions from propagating
 into uplift scores and doubly robust pseudo-outcomes.
 
+For randomized experiments, the X-learner defaults to the treatment share
+observed during `fit`, rather than assuming a universally balanced 50/50
+allocation. Its two arm-specific effect regressions are blended using that
+constant assignment propensity. Explicit scalar or per-customer propensities
+still override the default; observational treatment assignment generally
+requires a conditional propensity estimate rather than the marginal share.
+
 The DR-learner's default propensity classifier uses **unweighted** logistic
 regression. Unlike a rare-conversion outcome model, its target is the actual
 probability of treatment assignment. Applying inverse-class-frequency weights
