@@ -313,6 +313,27 @@ def test_bootstrap_decile_uplift_returns_one_row_per_decile(synthetic_data) -> N
     assert (populated["uplift_mean"] <= populated["ci_high"]).all()
 
 
+def test_bootstrap_decile_uplift_does_not_split_constant_scores() -> None:
+    # The model cannot distinguish customers; it must not manufacture five
+    # apparently separate uplift segments using their dataframe row order.
+    treatment = np.tile([1, 0], 100)
+    data = pd.DataFrame(
+        {
+            "uplift_score": np.full(200, 0.1),
+            "treatment": treatment,
+            "conversion": treatment,
+        }
+    )
+
+    table = bootstrap_decile_uplift(data, n_deciles=5, n_boot=30, random_state=4)
+
+    assert list(table["decile"]) == [1, 2, 3, 4, 5]
+    assert table.loc[0, "uplift_mean"] == pytest.approx(1.0)
+    assert table.loc[0, "ci_low"] == pytest.approx(1.0)
+    assert table.loc[0, "ci_high"] == pytest.approx(1.0)
+    assert table.loc[1:, ["uplift_mean", "ci_low", "ci_high"]].isna().all().all()
+
+
 def test_bootstrap_policy_value_rejects_invalid_fraction(synthetic_data) -> None:  # type: ignore[no-untyped-def]
     data = synthetic_data.assign(uplift_score=synthetic_data["discount_affinity"])
     with pytest.raises(ValueError, match="fraction"):

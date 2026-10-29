@@ -9,6 +9,8 @@ import pandas as pd
 from numpy.typing import NDArray
 from sklearn.metrics import auc, roc_auc_score
 
+from uplift_marketing.uplift import make_uplift_deciles
+
 
 def _validate_curve_inputs(
     outcome: NDArray[Any], treatment: NDArray[Any], uplift_score: NDArray[Any]
@@ -484,7 +486,9 @@ def bootstrap_decile_uplift(
     their uplift score (so a customer can drift between deciles across
     samples — this is part of the stability question). The observed
     treated-control gap inside each decile is recorded; CIs come from
-    quantiles across the ``n_boot`` samples.
+    quantiles across the ``n_boot`` samples. Equal scores always share a
+    group, so some of the requested deciles may be unoccupied and are
+    reported with NaN statistics rather than arbitrary within-tie rankings.
     """
 
     if n_deciles < 2:
@@ -497,6 +501,9 @@ def bootstrap_decile_uplift(
     missing = [c for c in (uplift_col, treatment_col, outcome_col) if c not in data]
     if missing:
         raise ValueError(f"Missing columns: {missing}")
+    # Validate the original scores before resampling, so bad observations
+    # cannot be randomly missed in some bootstrap draws.
+    make_uplift_deciles(data, uplift_col=uplift_col, n_deciles=n_deciles)
 
     rng = np.random.default_rng(random_state)
     n = len(data)
@@ -504,9 +511,8 @@ def bootstrap_decile_uplift(
     for i in range(n_boot):
         idx = rng.integers(0, n, size=n)
         sample = data.iloc[idx].reset_index(drop=True)
-        ranks = sample[uplift_col].rank(method="first", ascending=False)
-        deciles = pd.qcut(ranks, q=n_deciles, labels=False, duplicates="drop") + 1
-        sample = sample.assign(_decile=deciles.astype(int))
+        deciles = make_uplift_deciles(sample, uplift_col=uplift_col, n_deciles=n_deciles)
+        sample = sample.assign(_decile=deciles)
         for d in range(1, n_deciles + 1):
             chunk = sample[sample["_decile"] == d]
             treated = chunk[chunk[treatment_col] == 1]

@@ -165,7 +165,8 @@ def fig_uplift_by_decile(
 
     Decile 1 contains the highest-predicted-uplift customers. A
     well-ranked model produces a monotone (or nearly monotone) decreasing
-    bar chart from decile 1 to decile 10.
+    bar chart. Scores tied across quantile boundaries remain together,
+    so fewer than ten groups may be present.
     """
 
     if "uplift_decile" in scored.columns:

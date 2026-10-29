@@ -28,15 +28,37 @@ def attach_uplift_scores(
     return scored
 
 
-def make_uplift_deciles(data: pd.DataFrame, *, uplift_col: str = "uplift_score") -> pd.Series:
-    """Create descending uplift deciles where decile 1 has highest uplift."""
+def make_uplift_deciles(
+    data: pd.DataFrame, *, uplift_col: str = "uplift_score", n_deciles: int = 10
+) -> pd.Series:
+    """Create descending score-quantile groups without splitting tied scores.
+
+    The highest predicted scores receive group 1. When many customers share
+    the same score, fewer than ``n_deciles`` groups may be occupied; assigning
+    them artificial separate deciles would imply ranking power that the model
+    does not have. Labels for occupied groups remain consecutive from 1.
+    """
 
     if uplift_col not in data:
         raise ValueError(f"Uplift column not found: {uplift_col}")
+    if not isinstance(n_deciles, (int, np.integer)) or n_deciles < 2:
+        raise ValueError("n_deciles must be >= 2")
+    if data.empty:
+        raise ValueError("data must not be empty")
 
-    ranks = data[uplift_col].rank(method="first", ascending=False)
-    deciles = pd.qcut(ranks, q=10, labels=False, duplicates="drop") + 1
-    return deciles.astype(int)
+    scores = data[uplift_col].to_numpy(dtype=float)
+    if not np.isfinite(scores).all():
+        raise ValueError("uplift scores must contain only finite values")
+
+    # Quantiles of the score itself keep equal predictions in one bin.
+    # Sparse score distributions may skip quantile edges, so dense ranking
+    # renumbers only the occupied groups starting with the highest scores.
+    numeric_scores = pd.Series(scores, index=data.index, name=uplift_col)
+    bins = pd.qcut(numeric_scores, q=n_deciles, labels=False, duplicates="drop")
+    if bins.isna().all():
+        # A constant model has one indistinguishable group, not N fake bins.
+        return pd.Series(1, index=data.index, name=uplift_col, dtype=int)
+    return bins.rank(method="dense", ascending=False).astype(int)
 
 
 def uplift_by_group(
