@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -13,6 +14,7 @@ from uplift_marketing.economics import (
     scenario_table,
 )
 from uplift_marketing.pipeline import export_dashboard
+from uplift_marketing.treatment import naive_average_treatment_effect
 
 
 def test_campaign_economics_break_even() -> None:
@@ -289,3 +291,81 @@ def test_export_dashboard_selects_exactly_n_customers_at_tied_scores(tmp_path) -
     summary = json.loads(paths["model_summary"].read_text())
     assert summary["recommendation"]["n_selected"] == 25
     assert targets["in_recommendation"].sum() == 25
+
+
+def test_export_dashboard_preserves_exact_targets_when_ranking_scores_tie(
+    tmp_path: Path,
+) -> None:
+    """CRM flags must identify the same rows as the budget recommendation."""
+    scored = _scored_fixture(n=40).assign(
+        ranking_score=np.tile([0.50, 0.75, 0.90, 0.75], 10),
+        uplift_score=0.20,
+    )
+    economics = CampaignEconomics(cost_per_contact=0.05, value_per_conversion=1.0)
+    fractions = np.array([0.20])
+    recommendation = optimize_budget(
+        scored,
+        economics,
+        score_col="ranking_score",
+        fractions=fractions,
+    )
+
+    paths = export_dashboard(
+        scored,
+        economics=economics,
+        output_dir=tmp_path,
+        score_col="ranking_score",
+        fractions=[0.20],
+        write_figures=False,
+        write_model_card_md=False,
+        write_policy_report_md=False,
+    )
+
+    targets = pd.read_csv(paths["recommended_targets"])
+    selected_ids = targets.loc[targets["in_recommendation"] == 1, "customer_id"].tolist()
+    assert recommendation.n_selected == 8
+    assert selected_ids == recommendation.targets["customer_id"].tolist()
+    expected_order = scored.sort_values(
+        "ranking_score", ascending=False, kind="mergesort"
+    )["customer_id"].tolist()
+    assert targets["customer_id"].tolist() == expected_order
+    assert "ranking_score" in targets.columns
+
+
+def test_export_dashboard_honors_custom_schema_and_ranking_column(tmp_path: Path) -> None:
+    """Configured column names must flow into the summary and CRM export."""
+    scored = _scored_fixture(n=80, seed=7).rename(
+        columns={
+            "treatment": "assigned",
+            "conversion": "responded",
+            "uplift_score": "predicted_uplift",
+        }
+    )
+    scored["priority_score"] = np.arange(len(scored), dtype=float)[::-1]
+    economics = CampaignEconomics(cost_per_contact=0.05, value_per_conversion=20.0)
+
+    paths = export_dashboard(
+        scored,
+        economics=economics,
+        output_dir=tmp_path,
+        treatment_col="assigned",
+        outcome_col="responded",
+        uplift_col="predicted_uplift",
+        score_col="priority_score",
+        write_figures=False,
+    )
+
+    summary = json.loads(paths["model_summary"].read_text(encoding="utf-8"))
+    expected_ate = naive_average_treatment_effect(
+        scored, treatment_col="assigned", outcome_col="responded"
+    )
+    assert summary["naive_ate"] == pytest.approx(expected_ate)
+    targets = pd.read_csv(paths["recommended_targets"])
+    assert {
+        "priority_score",
+        "predicted_uplift",
+        "assigned",
+        "responded",
+    }.issubset(targets.columns)
+    assert "# Uplift Model Card" in paths["model_card"].read_text(encoding="utf-8")
+    assert "# Campaign policy report" in paths["policy_report"].read_text(encoding="utf-8")
