@@ -184,6 +184,75 @@ def test_subgroup_uplift_with_ci_returns_nan_below_min_arm_size() -> None:
     assert not np.isnan(by_device.loc["c", "ci_low"])
 
 
+@pytest.mark.parametrize("outcome", [0, 1])
+def test_subgroup_ci_retains_uncertainty_for_identical_boundary_rates(outcome: int) -> None:
+    # Both arms at 0% or 100% conversions should not imply certainty about
+    # the true difference, even though the plug-in Wald standard error is 0.
+    n_per_arm = 40
+    data = pd.DataFrame(
+        {
+            "segment": ["boundary"] * (2 * n_per_arm),
+            "treatment": [1, 0] * n_per_arm,
+            "conversion": [outcome] * (2 * n_per_arm),
+        }
+    )
+
+    interval = subgroup_uplift_with_ci(data, group_col="segment").iloc[0]
+    z_squared = 1.959963984540054**2
+    expected_width = z_squared / (n_per_arm + z_squared)
+
+    assert interval["observed_uplift"] == 0.0
+    assert interval["ci_low"] == pytest.approx(-expected_width)
+    assert interval["ci_high"] == pytest.approx(expected_width)
+
+
+def test_subgroup_ci_handles_perfect_separation_without_zero_width() -> None:
+    n_per_arm = 40
+    data = pd.DataFrame(
+        {
+            "segment": ["separated"] * (2 * n_per_arm),
+            "treatment": [1, 0] * n_per_arm,
+            "conversion": [1, 0] * n_per_arm,
+        }
+    )
+
+    positive = subgroup_uplift_with_ci(data, group_col="segment").iloc[0]
+    negative = subgroup_uplift_with_ci(
+        data.assign(treatment=1 - data["treatment"]), group_col="segment"
+    ).iloc[0]
+    z_squared = 1.959963984540054**2
+    wilson_width = z_squared / (n_per_arm + z_squared)
+
+    assert positive["observed_uplift"] == 1.0
+    assert positive["ci_low"] == pytest.approx(1.0 - np.sqrt(2.0) * wilson_width)
+    assert positive["ci_high"] == pytest.approx(1.0)
+    # Reversing treatment and control should negate and reverse the interval.
+    assert negative["observed_uplift"] == -1.0
+    assert negative["ci_low"] == pytest.approx(-positive["ci_high"])
+    assert negative["ci_high"] == pytest.approx(-positive["ci_low"])
+
+
+def test_subgroup_ci_widens_with_confidence_level() -> None:
+    data = pd.DataFrame(
+        {
+            "segment": ["mixed"] * 200,
+            "treatment": [1] * 100 + [0] * 100,
+            "conversion": [1] * 35 + [0] * 65 + [1] * 20 + [0] * 80,
+        }
+    )
+
+    lower_confidence = subgroup_uplift_with_ci(
+        data, group_col="segment", confidence=0.90
+    ).iloc[0]
+    higher_confidence = subgroup_uplift_with_ci(
+        data, group_col="segment", confidence=0.99
+    ).iloc[0]
+
+    assert lower_confidence["observed_uplift"] == pytest.approx(0.15)
+    assert higher_confidence["ci_low"] < lower_confidence["ci_low"]
+    assert higher_confidence["ci_high"] > lower_confidence["ci_high"]
+
+
 @pytest.mark.parametrize("invalid", [0.5, -1.0, 2.0, np.nan, np.inf, "unknown"])
 def test_group_uplift_metrics_reject_invalid_treatment(invalid: float | str) -> None:
     data = pd.DataFrame(

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from math import sqrt
 from typing import Any
 
 import numpy as np
@@ -185,6 +186,37 @@ def uplift_by_group(
     return pd.DataFrame(rows).sort_values(group_col)
 
 
+def _wilson_score_bounds(proportion: float, n: int, z: float) -> tuple[float, float]:
+    """Wilson score limits for a binomial proportion at a supplied z-score.
+
+    The score limits remain informative when the observed proportion is 0 or
+    1, unlike the corresponding plug-in Wald standard error.
+    """
+    z_squared = z * z
+    denominator = 1.0 + z_squared / n
+    center = (proportion + z_squared / (2.0 * n)) / denominator
+    radius = (z / denominator) * sqrt(
+        proportion * (1.0 - proportion) / n + z_squared / (4.0 * n * n)
+    )
+    return max(0.0, center - radius), min(1.0, center + radius)
+
+
+def _newcombe_difference_bounds(
+    p_t: float, p_c: float, n_t: int, n_c: int, z: float
+) -> tuple[float, float]:
+    """Newcombe's Wilson-based interval for two independent proportions.
+
+    Combine each arm's lower and upper Wilson score limits using the
+    square-root-of-squared-distances method (Newcombe, 1998, method 10).
+    """
+    treated_low, treated_high = _wilson_score_bounds(p_t, n_t, z)
+    control_low, control_high = _wilson_score_bounds(p_c, n_c, z)
+    difference = p_t - p_c
+    lower = difference - sqrt((p_t - treated_low) ** 2 + (control_high - p_c) ** 2)
+    upper = difference + sqrt((treated_high - p_t) ** 2 + (p_c - control_low) ** 2)
+    return max(-1.0, lower), min(1.0, upper)
+
+
 def subgroup_uplift_with_ci(
     data: pd.DataFrame,
     *,
@@ -194,20 +226,19 @@ def subgroup_uplift_with_ci(
     confidence: float = 0.95,
     min_arm_size: int = 30,
 ) -> pd.DataFrame:
-    """Subgroup-level observed uplift with a normal-approximation CI.
+    """Subgroup-level observed uplift with a Newcombe-Wilson confidence interval.
 
     For each unique value of ``group_col``, returns the within-subgroup
-    treated-control conversion-rate difference and a confidence interval
-    based on the standard error
-
-    .. math::
-        \\text{SE} = \\sqrt{p_t(1 - p_t) / n_t + p_c(1 - p_c) / n_c}.
+    treated-control conversion-rate difference. The interval combines Wilson
+    score limits for the two independent binomial proportions (Newcombe, 1998,
+    method 10). It is bounded by [-1, 1] and does not collapse to zero width
+    when conversion rates happen to be 0 or 1.
 
     The CI is set to ``NaN`` for subgroups whose treated or control arm has
-    fewer than ``min_arm_size`` rows, since the normal approximation is
-    unreliable there. This Bernoulli-based interval requires a binary 0/1
-    outcome. For continuous outcomes, use :func:`uplift_by_group` for the
-    descriptive estimate and a suitable continuous-outcome interval method.
+    fewer than ``min_arm_size`` rows, retaining the reporting threshold for
+    thin segments. This binomial interval requires a binary 0/1 outcome.
+    For continuous outcomes, use :func:`uplift_by_group` for the descriptive
+    estimate and a suitable continuous-outcome interval method.
 
     This is the per-segment counterpart to the marginal CIs in
     :func:`uplift_marketing.evaluation.bootstrap_policy_value`. It is the
@@ -231,8 +262,6 @@ def subgroup_uplift_with_ci(
         outcome_col=outcome_col,
         binary_outcome=True,
     )
-
-    from math import sqrt
 
     from scipy.stats import norm
 
@@ -262,9 +291,7 @@ def subgroup_uplift_with_ci(
         if n_t < min_arm_size or n_c < min_arm_size:
             ci_low = ci_high = float("nan")
         else:
-            se = sqrt(p_t * (1 - p_t) / n_t + p_c * (1 - p_c) / n_c)
-            ci_low = diff - z * se
-            ci_high = diff + z * se
+            ci_low, ci_high = _newcombe_difference_bounds(p_t, p_c, n_t, n_c, z)
         rows.append(
             {
                 group_col: group_value,

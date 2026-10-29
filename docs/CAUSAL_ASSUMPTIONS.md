@@ -32,11 +32,18 @@ rejected instead of silently excluded from a rate calculation.
 Group-level uplift diagnostics also require complete group identifiers, binary
 0/1 treatment assignments, and finite numeric outcomes across every group.
 `uplift_by_group` reports treated-minus-control means, including for continuous
-outcomes. `subgroup_uplift_with_ci` uses a Bernoulli normal-approximation
-variance, so it requires binary 0/1 outcomes and a positive integer minimum
-arm size; continuous outcomes require a different interval estimator. Groups
-with no observations in one treatment arm retain unidentifiable (NaN) uplift
-estimates instead of silently contributing to the comparison.
+outcomes. `subgroup_uplift_with_ci` uses the Newcombe (1998) Wilson-score
+confidence interval for a difference of independent binomial proportions, so
+it requires binary 0/1 outcomes and a positive integer minimum arm size;
+continuous outcomes require a different interval estimator. Unlike the former
+Wald interval, Wilson-based bounds remain non-degenerate when both arms have
+all successes or all failures. Groups with no observations in one treatment
+arm retain unidentifiable (NaN) uplift estimates instead of silently
+contributing to the comparison.
+
+Method reference: Newcombe, R. G. (1998), *Interval estimation for the
+difference between independent proportions: comparison of eleven methods*,
+Statistics in Medicine 17(8), 873–890 ([PubMed](https://pubmed.ncbi.nlm.nih.gov/9595617/)).
 
 The modelling feature splitter and `honest_train_test_split` require observed
 binary treatment and conversion labels. They reject fractional and non-finite
