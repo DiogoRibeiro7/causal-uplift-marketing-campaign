@@ -45,6 +45,15 @@ a synthetic generator when the real data is unavailable.
   with NB09 acting as a 2-minute executive summary that reads from the
   dashboard outputs.
 
+## Citation
+
+Use [CITATION.cff](CITATION.cff) for the repository's software citation. The
+[Zenodo concept DOI](https://doi.org/10.5281/zenodo.23803160) identifies the
+evolving project; to cite the precise v0.6.0 release, use
+[10.5281/zenodo.23803161](https://doi.org/10.5281/zenodo.23803161).
+Zenodo release descriptions and keywords are maintained in
+[.zenodo.json](.zenodo.json) and checked alongside the citation file in CI.
+
 ## Quickstart
 
 This project uses [Poetry](https://python-poetry.org/). After cloning:

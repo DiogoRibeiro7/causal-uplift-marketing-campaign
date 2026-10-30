@@ -1,0 +1,27 @@
+{
+  "creators": [
+    {
+      "name": "Ribeiro, Diogo",
+      "orcid": "0009-0001-2022-7072"
+    }
+  ],
+  "title": "Causal Uplift Modelling and Campaign Decision Economics: A Reproducible Python Framework (v0.6.0)",
+  "version": "v0.6.0",
+  "description": "<p>This Python framework estimates heterogeneous treatment effects and evaluates marketing interventions in randomized experiments. It implements S-, T-, X-, and cross-fitted doubly robust learners, treatment-assignment diagnostics, optional probability calibration, and uplift evaluation with Qini, AUUC, normalized Qini, and bootstrap uncertainty intervals.</p><p>Decision-economics tools translate incremental effects into targeting policies, optimize contact budgets under explicit cost and conversion-value assumptions, and produce economic scenario analyses, diagnostic figures, model cards, and stakeholder reports. Nine guided notebooks cover the workflow and its causal assumptions.</p><p>The public Hillstrom MineThatData benchmark is supported but must be obtained separately. Synthetic data enable reproducible offline experiments. The software is intended for research and decision support; results depend on identification assumptions, model uncertainty, and context-specific economic parameters. Distributed under the MIT License.</p>",
+  "keywords": [
+    "causal inference",
+    "heterogeneous treatment effects",
+    "uplift modelling",
+    "doubly robust estimation",
+    "cross-fitting",
+    "policy evaluation",
+    "marketing incrementality",
+    "decision economics",
+    "budget optimization",
+    "experimental design"
+  ],
+  "license": "mit",
+  "upload_type": "software",
+  "access_right": "open",
+  "language": "eng"
+}

@@ -1,0 +1,30 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite the version you used."
+type: software
+title: "Causal Uplift Modelling and Campaign Decision Economics: A Reproducible Python Framework"
+abstract: >-
+  A reproducible Python framework for heterogeneous treatment effect
+  estimation, honest uplift evaluation, and cost-aware marketing campaign
+  targeting. Includes S-, T-, X-, and doubly robust learners, Qini and AUUC
+  evaluation, bootstrap uncertainty, economic optimization, and guided notebooks.
+authors:
+  - given-names: "Diogo"
+    family-names: "Ribeiro"
+    orcid: "https://orcid.org/0009-0001-2022-7072"
+keywords:
+  - causal inference
+  - heterogeneous treatment effects
+  - uplift modelling
+  - doubly robust estimation
+  - cross-fitting
+  - policy evaluation
+  - marketing incrementality
+  - decision economics
+  - budget optimization
+  - experimental design
+license: MIT
+version: 0.6.0
+date-released: "2026-10-30"
+doi: "10.5281/zenodo.23803160"
+repository-code: "https://github.com/DiogoRibeiro7/causal-uplift-marketing-campaign"
+url: "https://github.com/DiogoRibeiro7/causal-uplift-marketing-campaign"
