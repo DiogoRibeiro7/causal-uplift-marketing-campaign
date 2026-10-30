@@ -1,65 +1,47 @@
-# Releasing to PyPI
+# GitHub-only releases
 
-This repository builds wheel and source distributions in CI. A separate
-GitHub Actions workflow, [publish-pypi.yml](../.github/workflows/publish-pypi.yml),
-publishes a stable release to PyPI using short-lived OpenID Connect credentials.
-The workflow does not require a PyPI API token secret.
+This project publishes stable versions as GitHub Releases. It does **not**
+publish packages to PyPI or any other package registry.
 
-## One-time configuration
-
-1. In GitHub, open **Settings → Environments** for this repository and create an
-   environment named `pypi`. Configure required reviewers for approval before
-   deployment. Where possible, restrict deployment tags to `v*`.
-2. On [PyPI](https://pypi.org/), configure the GitHub Actions Trusted Publisher:
-   - If `causal-uplift-marketing-campaign` already exists, open the project,
-     then **Manage → Publishing → Add a new publisher**.
-   - If it does not exist, use the account **Publishing** page to register a
-     *pending publisher* for the project name. This does not reserve the name
-     until the first successful publication.
-3. Enter the following details in PyPI, matching the workflow exactly:
-
-   | Field | Value |
-   | --- | --- |
-   | Project name (pending publisher only) | `causal-uplift-marketing-campaign` |
-   | GitHub owner | `DiogoRibeiro7` |
-   | Repository name | `causal-uplift-marketing-campaign` |
-   | Workflow filename | `publish-pypi.yml` |
-   | Environment name | `pypi` |
-
-The exact GitHub environment and workflow filename matter: PyPI verifies both
-when it grants a temporary publishing credential. Keep deployment approval
-enabled so publishing cannot happen without an explicit review.
-
-See the [PyPI Trusted Publishing guide](https://docs.pypi.org/trusted-publishers/)
-and the [GitHub environment protection guide](https://docs.github.com/en/actions/reference/workflows-and-actions/deployments-and-environments).
+The [GitHub Release Assets workflow](../.github/workflows/release-github.yml)
+starts when a stable GitHub Release is published. It builds and validates a
+wheel and source distribution from the release tag, then attaches both files
+directly to that GitHub Release. The workflow uses the built-in
+`GITHUB_TOKEN`, scoped to repository contents, and requires no PyPI credentials
+or Trusted Publisher configuration.
 
 ## Release checklist
 
-1. Update both `tool.poetry.version` in `pyproject.toml` and `__version__` in
-   `src/uplift_marketing/__init__.py` to the same new version. PyPI does not
-   allow uploading a second distribution with an already-published version.
-2. Open and merge a pull request with the version change only after the test,
-   lint, type-check, and distribution-build CI jobs pass.
-3. In GitHub, create a new Release from the merged `main` commit. Use the tag
-   `vMAJOR.MINOR.PATCH`, for example `v0.6.0`; do not mark it as a prerelease.
-4. Publish the GitHub Release. The `Publish to PyPI` workflow will:
-   - Build a wheel and source archive from the release tag.
-   - Check both distribution metadata files, the wheel's `__version__`, and
-     the release tag agree (via `scripts/verify_release.py`).
-   - Pause at the `pypi` environment for deployment approval.
-   - Publish the already-checked artifacts to PyPI using Trusted Publishing.
-5. Confirm the new version on PyPI and test installation in a clean environment.
+1. Confirm that `tool.poetry.version` in `pyproject.toml` and `__version__` in
+   `src/uplift_marketing/__init__.py` match the intended stable version.
+2. Run the release preflight locally against the release-candidate commit:
 
-The release workflow is not triggered by ordinary pushes or pull requests.
-Prerelease GitHub Releases may start a workflow run, but both jobs are skipped.
-Do not create a stable GitHub Release until the PyPI publisher and protected
-environment have been configured.
+   ```bash
+   poetry install --with dev
+   poetry run pytest
+   poetry run ruff check .
+   poetry run mypy src
+   poetry build
+   poetry run python scripts/verify_release.py --tag v0.6.0 --dist dist
+   ```
 
-To verify local release artifacts before creating a tag:
+   Replace `v0.6.0` with the intended release tag. Check that CI is green
+   across all supported Python versions. If real experimental data is not
+   available, record that limitation; synthetic data is not a substitute
+   for a real-data validation.
+3. Merge any release changes through a pull request. Confirm that the desired
+   commit is on `main` before creating a tag.
+4. In GitHub, create a new Release from the `main` commit using the stable tag
+   `vMAJOR.MINOR.PATCH` (for example, `v0.6.0`). Include concise release notes.
+5. Publish the GitHub Release. Watch the **GitHub Release Assets** workflow and
+   confirm both the `.whl` and `.tar.gz` appear under its downloadable assets.
+   The workflow never uploads either artifact to PyPI.
+6. Optionally verify a downloaded wheel in a clean environment. This is a
+   direct GitHub asset installation, not an installation from a package index.
 
-```bash
-poetry build
-python scripts/verify_release.py --tag v0.6.0 --dist dist
-```
-
-Replace `v0.6.0` with the new version tag when releasing a newer version.
+The release event triggers the asset workflow only for stable releases;
+prereleases are skipped because `verify_release.py` requires a stable
+`vMAJOR.MINOR.PATCH` tag. If the upload step fails, inspect the workflow logs
+and repository Actions permissions before retrying. A rerun against existing
+assets may report that the files already exist, which prevents an unintended
+overwrite.
