@@ -28,6 +28,15 @@ validated before integer conversion, avoiding accidental reassignment of
 fractional or non-finite labels. Outcome values may be continuous when the
 analysis measures incremental amounts instead of binary conversions.
 
+The prefix-ratio Qini estimator requires both treatment arms within a ranked
+prefix. If the top-ranked observations all belong to one arm, their observed
+conversions alone cannot identify incrementality. The Qini curve connects the
+zero-contact origin to the first prefix containing both arms, rather than
+crediting early treated-only outcomes as uplift. This is an interpolation
+convention used for the area calculation, not statistical identification of
+those early prefixes. For very small or severely imbalanced samples, inspect
+the arm counts alongside the curve and treat its area cautiously.
+
 Observed top-fraction policy estimates and decile bootstrap intervals likewise
 require fully observed 0/1 treatment assignments and finite numeric outcomes.
 They validate the entire evaluation set, including customers below a contact
