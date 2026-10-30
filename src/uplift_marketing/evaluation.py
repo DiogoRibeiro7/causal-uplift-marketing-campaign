@@ -162,10 +162,17 @@ def qini_curve(
 
     treated_conversions - control_conversions * treated_count / control_count
 
-    Gains within equal-score blocks are interpolated between their threshold
-    endpoints: a model cannot choose an order inside a tie. The integer arm
-    counts still describe one stable row order; interpolated gains within a
-    tie block should not be recomputed from those intermediate counts.
+    Prefixes containing only one treatment arm cannot identify a
+    treated-minus-control conversion gap. Instead of crediting conversions
+    observed in treated-only prefixes as incremental gains, interpolate from
+    the no-contact origin to the first prefix containing both arms. This
+    interpolation is a plotting convention, not an estimated treatment effect
+    for those unsupported prefixes.
+
+    Gains within equal-score blocks are subsequently interpolated between
+    their threshold endpoints: a model cannot choose an order inside a tie.
+    The integer arm counts still describe one stable row order; interpolated
+    gains should not be recomputed from those intermediate counts.
     """
 
     outcome, treatment, uplift_score = _validate_curve_inputs(outcome, treatment, uplift_score)
@@ -180,9 +187,21 @@ def qini_curve(
     treated_positive_cum = np.cumsum((t_sorted == 1) * y_sorted)
     control_positive_cum = np.cumsum((t_sorted == 0) * y_sorted)
 
-    # Avoid division by zero at very early prefixes.
+    # Compute identified gaps where both arms are represented. A zero-control
+    # prefix cannot support the counterfactual term; the denominator floor
+    # below is used only to keep the intermediate arithmetic finite.
     safe_control = np.maximum(control_cum, 1)
     incremental_gain = treated_positive_cum - control_positive_cum * treated_cum / safe_control
+
+    # The full experiment has both arms, so a first identified prefix exists.
+    # Fill the unsupported leading region by connecting (0, 0) to that
+    # prefix instead of assigning the treated-only conversions as uplift.
+    identified = (treated_cum > 0) & (control_cum > 0)
+    first_identified = int(np.flatnonzero(identified)[0])
+    if first_identified:
+        incremental_gain[:first_identified] = incremental_gain[first_identified] * (
+            np.arange(1, first_identified + 1) / (first_identified + 1)
+        )
     incremental_gain = _interpolate_tied_gains(scores_sorted, incremental_gain)
 
     population_fraction = np.arange(1, len(outcome) + 1) / len(outcome)

@@ -110,6 +110,36 @@ def test_tied_scores_have_row_order_invariant_qini_and_uplift_curves() -> None:
         np.testing.assert_allclose(original["incremental_gain"], expected)
 
 
+def test_qini_does_not_credit_treated_only_prefixes_as_incremental_gain() -> None:
+    """The leading treated-only block cannot prove lift without any controls."""
+    treatment = np.array([1, 1, 1, 0, 0, 0], dtype=int)
+    outcomes = np.ones(len(treatment), dtype=int)
+    scores = np.arange(len(treatment), 0, -1, dtype=float)
+
+    curve = qini_curve(outcomes, treatment, scores)
+
+    # Both arms have a 100% outcome rate. The old denominator=1 shortcut
+    # incorrectly reported gains of 1, 2, and 3 before the first control.
+    np.testing.assert_allclose(curve["incremental_gain"], 0.0)
+    assert area_under_qini(curve) == pytest.approx(0.0)
+    assert curve["treated_count"].tolist() == [1, 2, 3, 3, 3, 3]
+    assert curve["control_count"].tolist() == [0, 0, 0, 1, 2, 3]
+
+
+def test_qini_interpolates_leading_unsupported_prefixes() -> None:
+    """Early Qini points connect the origin to the first two-arm estimate."""
+    treatment = np.array([1, 1, 0, 0], dtype=int)
+    outcomes = np.array([1, 0, 0, 1], dtype=int)
+    scores = np.array([0.9, 0.8, 0.5, 0.1])
+
+    curve = qini_curve(outcomes, treatment, scores)
+
+    # The first identifiable prefix is k=3, with Qini gain 1.0. Earlier
+    # points have no control reference and follow a linear convention.
+    np.testing.assert_allclose(curve["incremental_gain"], [1 / 3, 2 / 3, 1.0, 0.0])
+    assert area_under_qini(curve) == pytest.approx(0.5)
+
+
 def test_constant_scores_have_zero_normalized_qini() -> None:
     outcome = np.array([1, 0, 0, 1, 1, 0], dtype=int)
     treatment = np.array([1, 1, 0, 0, 1, 0], dtype=int)
@@ -122,11 +152,11 @@ def test_constant_scores_have_zero_normalized_qini() -> None:
 
 
 def test_qini_reference_is_not_a_strict_upper_bound() -> None:
-    # With severe arm imbalance, prefix-dependent scaling means the
-    # signed-outcome reference need not maximise Qini area.
-    treatment = np.array([1, 0, 0, 0, 0, 0], dtype=int)
-    outcome = np.array([0, 1, 1, 0, 0, 0], dtype=int)
-    scores = np.array([1.0, 6.0, 5.0, 4.0, 3.0, 2.0])
+    # Prefix-dependent scaling means the signed-outcome reference need not
+    # maximise Qini area, even after unsupported prefixes are interpolated.
+    treatment = np.array([0, 0, 1, 1, 1, 0], dtype=int)
+    outcome = np.array([1, 0, 0, 0, 1, 0], dtype=int)
+    scores = np.array([0.0, 2.0, 1.0, 3.0, 5.0, 4.0])
 
     result = normalized_qini(outcome, treatment, scores)
 
