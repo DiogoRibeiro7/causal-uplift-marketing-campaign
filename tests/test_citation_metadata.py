@@ -93,6 +93,26 @@ def test_creator_orcid_drift_is_rejected(metadata_copy: Path) -> None:
         verify_citation_metadata(TAG, metadata_copy)
 
 
+def test_creator_affiliation_drift_is_rejected(metadata_copy: Path) -> None:
+    """The academic affiliation must appear in both citation formats."""
+    path = metadata_copy / ".zenodo.json"
+    metadata = json.loads(path.read_text(encoding="utf-8"))
+    del metadata["creators"][0]["affiliation"]
+    path.write_text(json.dumps(metadata), encoding="utf-8")
+    with pytest.raises(ValueError, match="author affiliation must match"):
+        verify_citation_metadata(TAG, metadata_copy)
+
+
+def test_correspondence_email_drift_is_rejected(metadata_copy: Path) -> None:
+    """Preserve contact email in CFF and Zenodo's supported notes field."""
+    path = metadata_copy / ".zenodo.json"
+    metadata = json.loads(path.read_text(encoding="utf-8"))
+    del metadata["notes"]
+    path.write_text(json.dumps(metadata), encoding="utf-8")
+    with pytest.raises(ValueError, match="correspondence email must match"):
+        verify_citation_metadata(TAG, metadata_copy)
+
+
 def test_cff_doi_is_not_a_version_specific_identifier(metadata_copy: Path) -> None:
     """The repository's evolving citation must retain its concept DOI."""
     path = metadata_copy / "CITATION.cff"

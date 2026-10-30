@@ -162,6 +162,23 @@ def verify_citation_metadata(tag: str, root: Path = PROJECT_ROOT) -> None:
         creator.get("name") == f"{author.get('family-names')}, {author.get('given-names')}",
         "Zenodo creator name differs from CITATION author",
     )
+    affiliation = author.get("affiliation")
+    _require(
+        isinstance(affiliation, str)
+        and bool(affiliation.strip())
+        and creator.get("affiliation") == affiliation,
+        "Zenodo and CITATION author affiliation must match",
+    )
+    email = author.get("email")
+    _require(
+        isinstance(email, str)
+        and bool(re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email)),
+        "CITATION.cff: author email must be valid",
+    )
+    _require(
+        isinstance(zenodo.get("notes"), str) and email in zenodo["notes"],
+        ".zenodo.json: correspondence email must match CITATION.cff",
+    )
     orcid = creator.get("orcid")
     _require(
         isinstance(orcid, str)

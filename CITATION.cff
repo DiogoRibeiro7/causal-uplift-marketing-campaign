@@ -10,6 +10,8 @@ abstract: >-
 authors:
   - given-names: "Diogo"
     family-names: "Ribeiro"
+    affiliation: "Faculty of Media Arts and Design, Technical University of Porto, Vila do Conde, Portugal"
+    email: "dfr@esmad.ipp.pt"
     orcid: "https://orcid.org/0009-0001-2022-7072"
 keywords:
   - causal inference
