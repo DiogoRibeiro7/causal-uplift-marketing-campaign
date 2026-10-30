@@ -61,8 +61,21 @@ treatment alone; conversion balance within each arm is then not guaranteed.
 If even the treatment-arm balance is impossible, the split raises an error.
 The end-to-end `run_pipeline` uses this same helper, so rare conversion
 strata produce an explicit fallback warning instead of a scikit-learn
-stratification error. Model fitting still requires enough outcome variation
-for the chosen classifier.
+stratification error. The cross-fitted uplift and doubly robust learners use
+the same principle: when a treatment-outcome cell has fewer observations than
+the requested number of folds, they warn and fall back to treatment-only
+stratification. Every fold still has a held-out portion of each treatment arm,
+but conversion rates within arms may vary substantially across folds.
+
+Default logistic-regression outcome models (including cross-validated
+calibration) also require two observed outcome classes. When an individual
+training arm or fold contains only conversions or only non-conversions, the
+learner warns and fits an empirical constant-probability classifier for that
+arm. User-supplied classifiers that support single-class fitting retain their
+own behavior. This avoids a training exception but **does not manufacture
+evidence about the missing outcome class**: effects from extremely sparse
+conversion samples remain uncertain and should not drive targeting without
+additional data or uncertainty analysis.
 
 S-, T-, X-, and doubly robust learners also validate the original treatment
 and binary conversion labels when fitted directly. Models require both arms,

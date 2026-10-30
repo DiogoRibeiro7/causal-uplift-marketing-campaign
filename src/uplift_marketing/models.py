@@ -8,12 +8,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any, Callable, Protocol, TypeAlias
+from warnings import warn
 
 import numpy as np
 import pandas as pd
 from numpy.typing import NDArray
 from sklearn.base import BaseEstimator, ClassifierMixin, RegressorMixin, clone
 from sklearn.calibration import CalibratedClassifierCV
+from sklearn.dummy import DummyClassifier
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression, Ridge
 from sklearn.model_selection import StratifiedKFold
@@ -172,12 +174,7 @@ class SLearner:
             categorical=self.spec.categorical,
             excluded=self.spec.excluded,
         )
-        self.pipeline_ = Pipeline(
-            steps=[
-                ("preprocessor", build_preprocessor(spec_with_treatment)),
-                ("model", clone(self.base_model)),
-            ]
-        )
+        self.pipeline_ = _make_outcome_pipeline(spec_with_treatment, self.base_model, y_array)
         self.pipeline_.fit(training_frame, y_array)
         return self
 
@@ -249,6 +246,66 @@ def make_calibrated_classifier(
     return CalibratedClassifierCV(estimator=base_estimator, method=method, cv=cv)
 
 
+def _make_outcome_pipeline(
+    spec: FeatureSpec, base_model: ClassifierMixin | None, outcomes: NDArray[np.int64]
+) -> Pipeline:
+    """Build an outcome model, accommodating observed single-class training arms.
+
+    Logistic regression and cross-validated calibration require both outcome
+    classes. A fold with no conversions has a degenerate empirical event rate
+    of zero (or one), so use a constant class-prior classifier.
+    Preserve user-supplied estimators that can already fit a single class.
+    """
+
+    if base_model is None:
+        raise TypeError("An outcome classifier is required")
+
+    if np.unique(outcomes).size == 1 and isinstance(
+        base_model, (LogisticRegression, CalibratedClassifierCV)
+    ):
+        warn(
+            "A training arm has only one observed outcome class; using an "
+            "empirical constant-probability classifier for this arm.",
+            UserWarning,
+            stacklevel=3,
+        )
+        classifier: ClassifierMixin = DummyClassifier(strategy="prior")
+    else:
+        classifier = clone(base_model)
+
+    return Pipeline(
+        steps=[
+            ("preprocessor", build_preprocessor(spec)),
+            ("model", classifier),
+        ]
+    )
+
+
+def _cross_fit_strata(
+    treatment: NDArray[np.int64], outcome: NDArray[np.int64], n_splits: int
+) -> NDArray[np.int64]:
+    """Stratify on treatment and outcome only when every cell supports K folds.
+
+    Treatment-only stratification remains possible because callers check that
+    both treatment arms contain at least ``n_splits`` observations.
+    """
+
+    joint = 2 * treatment + outcome
+    counts = np.bincount(joint, minlength=4)
+    present = counts[counts > 0]
+    if present.min() >= n_splits:
+        return joint
+
+    warn(
+        "Rare treatment-outcome strata prevent joint cross-fit stratification; "
+        "using treatment-only stratification. Per-arm conversion balance "
+        "across folds is not guaranteed.",
+        UserWarning,
+        stacklevel=3,
+    )
+    return treatment
+
+
 @dataclass
 class TLearner:
     """T-learner uplift model.
@@ -281,17 +338,11 @@ class TLearner:
         treated_mask = treatment_array == 1
         control_mask = treatment_array == 0
 
-        self.treated_pipeline_ = Pipeline(
-            steps=[
-                ("preprocessor", build_preprocessor(self.spec)),
-                ("model", clone(self.base_model)),
-            ]
+        self.treated_pipeline_ = _make_outcome_pipeline(
+            self.spec, self.base_model, y_array[treated_mask]
         )
-        self.control_pipeline_ = Pipeline(
-            steps=[
-                ("preprocessor", build_preprocessor(self.spec)),
-                ("model", clone(self.base_model)),
-            ]
+        self.control_pipeline_ = _make_outcome_pipeline(
+            self.spec, self.base_model, y_array[control_mask]
         )
 
         self.treated_pipeline_.fit(x.loc[treated_mask], y_array[treated_mask])
@@ -367,17 +418,11 @@ class XLearner:
         control_mask = treatment_array == 0
 
         # Stage 1: outcome models per arm.
-        self.treated_outcome_pipeline_ = Pipeline(
-            steps=[
-                ("preprocessor", build_preprocessor(self.spec)),
-                ("model", clone(self.base_model)),
-            ]
+        self.treated_outcome_pipeline_ = _make_outcome_pipeline(
+            self.spec, self.base_model, y_array[treated_mask]
         )
-        self.control_outcome_pipeline_ = Pipeline(
-            steps=[
-                ("preprocessor", build_preprocessor(self.spec)),
-                ("model", clone(self.base_model)),
-            ]
+        self.control_outcome_pipeline_ = _make_outcome_pipeline(
+            self.spec, self.base_model, y_array[control_mask]
         )
         self.treated_outcome_pipeline_.fit(x.loc[treated_mask], y_array[treated_mask])
         self.control_outcome_pipeline_.fit(x.loc[control_mask], y_array[control_mask])
@@ -533,7 +578,7 @@ def cross_fit_uplift_oof(
     if np.bincount(treatment_arr, minlength=2).min() < n_splits:
         raise ValueError("Each treatment arm must contain at least n_splits observations")
 
-    stratify = treatment_arr.astype(str).astype(object) + "_" + y_arr.astype(str).astype(object)
+    stratify = _cross_fit_strata(treatment_arr, y_arr, n_splits)
 
     oof = np.empty(len(x_idx), dtype=float)
     skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=random_state)
@@ -612,11 +657,7 @@ class DRLearner:
         n = len(x_local)
         pseudo = np.zeros(n, dtype=float)
         clip_lo, clip_hi = self.propensity_clip
-        stratify = (
-            treatment_arr.astype(str).astype(object)
-            + "_"
-            + y_arr.astype(str).astype(object)
-        )
+        stratify = _cross_fit_strata(treatment_arr, y_arr, self.n_splits)
         skf = StratifiedKFold(
             n_splits=self.n_splits,
             shuffle=True,
@@ -631,18 +672,6 @@ class DRLearner:
             t_te = treatment_arr[te_idx].astype(float)
             y_te = y_arr[te_idx].astype(float)
 
-            mu0 = Pipeline(
-                steps=[
-                    ("preprocessor", build_preprocessor(self.spec)),
-                    ("model", clone(self.base_model)),
-                ]
-            )
-            mu1 = Pipeline(
-                steps=[
-                    ("preprocessor", build_preprocessor(self.spec)),
-                    ("model", clone(self.base_model)),
-                ]
-            )
             propensity = Pipeline(
                 steps=[
                     ("preprocessor", build_preprocessor(self.spec)),
@@ -652,6 +681,8 @@ class DRLearner:
 
             ctrl_mask = t_tr == 0
             trtd_mask = t_tr == 1
+            mu0 = _make_outcome_pipeline(self.spec, self.base_model, y_tr[ctrl_mask])
+            mu1 = _make_outcome_pipeline(self.spec, self.base_model, y_tr[trtd_mask])
             mu0.fit(x_tr.iloc[ctrl_mask], y_tr[ctrl_mask])
             mu1.fit(x_tr.iloc[trtd_mask], y_tr[trtd_mask])
             propensity.fit(x_tr, t_tr)

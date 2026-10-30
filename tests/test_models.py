@@ -262,6 +262,93 @@ def test_dr_learner_pseudo_outcomes_handle_single_class_arms() -> None:
     assert np.allclose(model.predict_uplift(x), 1.0)
 
 
+def test_default_s_learner_handles_no_observed_conversions() -> None:
+    """Default logistic regression must handle an all-negative training sample."""
+    x, treatment, _ = _constant_outcome_by_arm()
+    outcome = np.zeros(len(x), dtype=int)
+    spec = FeatureSpec(numerical=["signal"], categorical=[], excluded=[])
+
+    with pytest.warns(UserWarning, match="only one observed outcome class"):
+        model = SLearner(spec=spec).fit(x, treatment, outcome)
+
+    p_control, p_treated = model.predict_potential_outcomes(x)
+    np.testing.assert_allclose(p_control, 0.0)
+    np.testing.assert_allclose(p_treated, 0.0)
+    np.testing.assert_allclose(model.predict_uplift(x), 0.0)
+
+
+@pytest.mark.parametrize("learner_type", [TLearner, XLearner, DRLearner])
+def test_default_arm_models_handle_constant_outcomes(
+    learner_type: type[TLearner] | type[XLearner] | type[DRLearner],
+) -> None:
+    """Default outcome models fall back to empirical priors in deterministic arms."""
+    x, treatment, outcome = _constant_outcome_by_arm()
+    spec = FeatureSpec(numerical=["signal"], categorical=[], excluded=[])
+
+    with pytest.warns(UserWarning, match="only one observed outcome class"):
+        model = learner_type(spec=spec, random_state=3).fit(x, treatment, outcome)
+
+    if isinstance(model, (TLearner, XLearner)):
+        p_control, p_treated = model.predict_potential_outcomes(x)
+        np.testing.assert_allclose(p_control, 0.0)
+        np.testing.assert_allclose(p_treated, 1.0)
+    if isinstance(model, DRLearner):
+        assert model.cross_fit_pseudo_outcomes_ is not None
+        np.testing.assert_allclose(model.cross_fit_pseudo_outcomes_, 1.0)
+    np.testing.assert_allclose(model.predict_uplift(x), 1.0, atol=1e-10)
+
+
+def test_calibrated_outcome_model_handles_constant_arm() -> None:
+    """Cross-validated calibration also needs a constant-outcome fallback."""
+    x, treatment, outcome = _constant_outcome_by_arm()
+    spec = FeatureSpec(numerical=["signal"], categorical=[], excluded=[])
+
+    with pytest.warns(UserWarning, match="only one observed outcome class"):
+        model = TLearner(spec=spec, base_model=make_calibrated_classifier(cv=3)).fit(
+            x, treatment, outcome
+        )
+
+    np.testing.assert_allclose(model.predict_uplift(x), 1.0)
+
+
+def _rare_conversion_experiment() -> tuple[pd.DataFrame, NDArray[np.int64], NDArray[np.int64]]:
+    """Make an experiment with one conversion and enough rows per arm for five folds."""
+    x = pd.DataFrame({"signal": np.linspace(-1.0, 1.0, 80)})
+    treatment = np.r_[np.zeros(40, dtype=int), np.ones(40, dtype=int)]
+    outcome = np.zeros(80, dtype=int)
+    outcome[53] = 1
+    return x, treatment, outcome
+
+
+def test_cross_fit_oof_falls_back_to_treatment_strata_for_rare_conversions() -> None:
+    """A singleton conversion cell cannot be partitioned across five folds."""
+    x, treatment, outcome = _rare_conversion_experiment()
+    spec = FeatureSpec(numerical=["signal"], categorical=[], excluded=[])
+
+    with pytest.warns(UserWarning, match="Rare treatment-outcome strata"):
+        uplift = cross_fit_uplift_oof(
+            lambda: TLearner(spec=spec), x, treatment, outcome, n_splits=5, random_state=3
+        )
+
+    assert uplift.shape == (len(x),)
+    assert np.isfinite(uplift).all()
+
+
+def test_dr_cross_fit_falls_back_to_treatment_strata_for_rare_conversions() -> None:
+    """Rare conversions must not make cross-fitted AIPW nuisance fits fail."""
+    x, treatment, outcome = _rare_conversion_experiment()
+    spec = FeatureSpec(numerical=["signal"], categorical=[], excluded=[])
+
+    with pytest.warns(UserWarning, match="Rare treatment-outcome strata"):
+        model = DRLearner(spec=spec, n_splits=5, random_state=3).fit(
+            x, treatment, outcome
+        )
+
+    assert model.cross_fit_pseudo_outcomes_ is not None
+    assert np.isfinite(model.cross_fit_pseudo_outcomes_).all()
+    assert np.isfinite(model.predict_uplift(x)).all()
+
+
 class _ReversedBinaryClassifier(BaseEstimator):
     """Minimal fitted classifier whose positive class is the first column."""
 
