@@ -87,10 +87,9 @@ Build the source archive and wheel locally:
 poetry build
 ```
 
-This creates both artifacts under `dist/`. CI verifies that they build;
-publishing to PyPI is a separate release action. For the guarded GitHub
-Release workflow and Trusted Publisher setup, see
-[the release guide](docs/RELEASING.md).
+This creates both artifacts under `dist/`. CI verifies that they build.
+Stable GitHub Releases attach validated wheel and source distributions;
+the project does not publish to PyPI. See [the release guide](docs/RELEASING.md).
 
 ### Programmatic use
 
